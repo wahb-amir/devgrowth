@@ -3,11 +3,17 @@ import { retry } from '@octokit/plugin-retry'
 import { throttling } from '@octokit/plugin-throttling'
 import { getConfig } from './config.js'
 
+/**
+ * Extend Octokit with plugins
+ */
 const ThrottledOctokit = Octokit.plugin(retry, throttling)
 
-let _client = null
+/**
+ * Proper typed singleton
+ */
+let _client: InstanceType<typeof ThrottledOctokit> | null = null
 
-export function getGitHubClient() {
+export function getGitHubClient(): InstanceType<typeof ThrottledOctokit> {
   if (_client) return _client
 
   const config = getConfig()
@@ -27,6 +33,7 @@ export function getGitHubClient() {
         )
         return retryCount < 2
       },
+
       onSecondaryRateLimit: (retryAfter, options) => {
         console.warn(
           `GitHub secondary rate limit hit for ${options.method} ${options.url}. ` +
@@ -38,30 +45,4 @@ export function getGitHubClient() {
   })
 
   return _client
-}
-
-/**
- * Returns current GitHub API rate limit status.
- * Call before a batch ingestion run to check headroom.
- */
-export async function getRateLimitStatus() {
-  const octokit = getGitHubClient()
-  const { data } = await octokit.rateLimit.get()
-  const core = data.resources.core
-
-  return {
-    limit: core.limit,
-    remaining: core.remaining,
-    reset: new Date(core.reset * 1000),
-    used: core.used,
-  }
-}
-
-/**
- * Returns true if we have enough headroom for the next ingestion batch.
- * One full developer ingestion costs roughly 60–80 API requests.
- */
-export async function hasRateLimitHeadroom(requiredRequests = 80) {
-  const status = await getRateLimitStatus()
-  return status.remaining >= requiredRequests
 }
