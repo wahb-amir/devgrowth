@@ -3,8 +3,8 @@ import { loadConfig } from './lib/config.js'
 import { connectDatabase, disconnectDatabase } from './db/connection.js'
 import { buildServer } from './server.js'
 import { registerScheduledJobs } from './jobs/scheduler.js'
-import { jobQueue } from './jobs/queue.js'
-
+import {discoverDev} from './jobs/discover/job.js'
+import { jobQueue } from "./jobs/queue.js";
 async function main() {
   // 1. Validate env vars — exits cleanly if anything is missing
   const config = loadConfig()
@@ -56,13 +56,7 @@ function registerJobHandlers() {
   // Each stub logs clearly which phase implements the real logic.
   // This means the server boots and the queue works end-to-end in Phase 0.
 
-  jobQueue.register('discover:developer', async (job) => {
-    const start = Date.now()
-    console.info(`[Job] discover:developer — ${job.payload.username} (stub: Phase 1)`)
-    
-    // Phase 1: look up GitHub profile, create DeveloperModel record, enqueue ingest:developer
-    return { success: true, durationMs: Date.now() - start }
-  })
+  jobQueue.register('discover:developer', discoverDev);
 
   jobQueue.register('ingest:developer', async (job) => {
     const start = Date.now()

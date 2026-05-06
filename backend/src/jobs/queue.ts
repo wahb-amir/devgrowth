@@ -9,7 +9,8 @@ type JobResult = {
   error?: string
 }
 
-type JobHandler = (job: Job) => Promise<JobResult>
+
+export type JobHandler = (job: Job) => Promise<any>;
 
 type QueuedJob = {
   id: string
