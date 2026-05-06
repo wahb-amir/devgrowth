@@ -2,14 +2,10 @@ import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { DeveloperModel } from "../db/models/index.js";
 import { jobQueue } from "../jobs/queue.js";
-import type { InferSchemaType } from "mongoose";
 
-export type Developer = {
-  githubId: number
-  username: string
-  ingestionStatus: 'pending' | 'running' | 'complete' | 'failed'
-  lastFetchedAt?: Date | null
-}
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+/* ---------------- VALIDATION ---------------- */
 
 const usernameSchema = z
   .string()
@@ -22,12 +18,36 @@ const usernameSchema = z
 type DiscoverBody = {
   username: string;
 };
+function getFailureMessage(code: string): string {
+  switch (code) {
+    case "GITHUB_NOT_FOUND":
+      return "This GitHub user does not exist.";
+
+    case "GITHUB_RATE_LIMIT":
+      return "GitHub rate limit exceeded. Try again later.";
+
+    case "GITHUB_FORBIDDEN":
+      return "Access to this profile is restricted.";
+
+    case "GITHUB_SERVER_ERROR":
+      return "GitHub is currently experiencing issues.";
+
+    case "NETWORK_ERROR":
+      return "Network issue while contacting GitHub.";
+
+    default:
+      return "Unknown error occurred while fetching profile.";
+  }
+}
+
+/* ---------------- ROUTES ---------------- */
 
 export async function developerRoutes(fastify: FastifyInstance) {
-  // POST /developers/discover
   fastify.post<{ Body: DiscoverBody }>(
     "/developers/discover",
     async (request, reply) => {
+      const start = Date.now();
+
       const parsed = usernameSchema.safeParse(request.body.username);
 
       if (!parsed.success) {
@@ -39,47 +59,52 @@ export async function developerRoutes(fastify: FastifyInstance) {
 
       const username = parsed.data.toLowerCase();
 
-      const existing = await DeveloperModel.findOne({
-        username,
-      }).lean<Developer>();
-      if (
-        existing &&
-        existing.ingestionStatus === "complete" &&
-        existing.lastFetchedAt &&
-        existing.lastFetchedAt <= new Date(Date.now() - 24 * 60 * 60 * 1000)
-      ) {
-        return reply.send({
-          status: "existing",
-          developer: existing,
-          message: `${username} is already indexed.`,
-        });
+      /* ---------------- DB LOOKUP ---------------- */
+
+      const existing = await DeveloperModel.findOne({ username }).lean();
+
+      const now = Date.now();
+
+      /* ---------------- 1. FRESH CHECK ---------------- */
+
+      if (existing?.failure?.retryAt) {
+        const retryAt = new Date(existing.failure.retryAt).getTime();
+
+        if (now < retryAt) {
+          const isPermanent = existing.failure.code === "GITHUB_NOT_FOUND";
+
+          return reply.status(isPermanent ? 410 : 429).send({
+            success: false,
+
+            error: {
+              code: existing.failure.code,
+              type: isPermanent ? "permanent" : "temporary",
+
+              message: getFailureMessage(existing.failure.code),
+
+              retryAt: existing.failure.retryAt,
+            },
+
+            username,
+          });
+        }
       }
-
-      jobQueue.enqueue({
-        name: "discover:developer",
-        payload: { username, source: "search" },
-      });
-
-      return reply.status(202).send({
-        status: "queued",
-        username,
-        message: `Discovery job queued for ${username}. Profile will be available shortly.`,
-      });
     },
   );
 
-  // GET /developers/:username
+  /* ---------------- GET ---------------- */
+
   fastify.get<{ Params: { username: string } }>(
     "/developers/:username",
     async (request, reply) => {
       const username = request.params.username.toLowerCase();
 
-      const developer = await DeveloperModel.findOne({ username }).lean<Developer>();
+      const developer = await DeveloperModel.findOne({ username }).lean();
 
       if (!developer) {
         return reply.status(404).send({
           error: "not_found",
-          message: `${username} has not been indexed yet. POST /discover to index them.`,
+          message: `${username} not indexed yet.`,
         });
       }
 
@@ -90,7 +115,7 @@ export async function developerRoutes(fastify: FastifyInstance) {
         return reply.status(202).send({
           status: developer.ingestionStatus,
           username,
-          message: `Profile for ${username} is being indexed. Check back shortly.`,
+          message: "Indexing in progress.",
         });
       }
 

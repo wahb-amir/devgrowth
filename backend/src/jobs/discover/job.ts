@@ -88,7 +88,10 @@ export const discoverDev: JobHandler = async (job) => {
       username: normalizedUsername,
     });
 
-    // CASE A — already processing
+    const now = Date.now();
+
+    /* ---------------- CASE A — already processing ---------------- */
+
     if (existing?.ingestionStatus === "processing") {
       return {
         success: true,
@@ -98,10 +101,11 @@ export const discoverDev: JobHandler = async (job) => {
       };
     }
 
-    // CASE B — fresh
+    /* ---------------- CASE B — fresh ---------------- */
+
     const isFresh =
       existing?.lastFetchedAt &&
-      Date.now() - new Date(existing.lastFetchedAt).getTime() < DAY_MS;
+      now - new Date(existing.lastFetchedAt).getTime() < DAY_MS;
 
     if (existing && existing.ingestionStatus === "completed" && isFresh) {
       return {
@@ -114,32 +118,93 @@ export const discoverDev: JobHandler = async (job) => {
 
     /* ---------------- PRE-FLIGHT GITHUB CHECK ---------------- */
 
-    const profile = await fetchGithubProfile(normalizedUsername);
+    let profile;
 
-    // ❌ user does not exist → stop pipeline early
+    try {
+      profile = await fetchGithubProfile(normalizedUsername);
+    } catch (err: any) {
+      /* ---------------- SMART FAILURE HANDLING ---------------- */
+
+      const status = err?.message || "UNKNOWN_ERROR";
+
+      let failureDoc: any = null;
+
+      if (status.includes("404")) {
+        failureDoc = {
+          code: "GITHUB_NOT_FOUND",
+          retryAt: new Date(now + DAY_MS),
+        };
+      } else if (status.includes("403") || status.includes("429")) {
+        failureDoc = {
+          code: "GITHUB_RATE_LIMIT",
+          retryAt: new Date(now + 10 * 60 * 1000), // 10 min
+        };
+      } else if (status.includes("5")) {
+        failureDoc = {
+          code: "GITHUB_SERVER_ERROR",
+          retryAt: new Date(now + 5 * 60 * 1000), // 5 min
+        };
+      } else {
+        failureDoc = {
+          code: "UNKNOWN_ERROR",
+          retryAt: new Date(now + 30 * 60 * 1000),
+        };
+      }
+
+      await DeveloperModel.updateOne(
+        { username: normalizedUsername },
+        {
+          $set: {
+            ingestionStatus: "failed",
+            failure: {
+              ...failureDoc,
+              failedAt: new Date(),
+            },
+            lastQueuedAt: new Date(),
+          },
+        },
+        { upsert: true }
+      );
+
+      return {
+        success: false,
+        action: "github_fetch_failed",
+        username: normalizedUsername,
+        error: failureDoc.code,
+        retryable: failureDoc.code !== "GITHUB_NOT_FOUND",
+        durationMs: Date.now() - start,
+      };
+    }
+
+    /* ---------------- USER NOT FOUND ---------------- */
+
     if (!profile) {
       await DeveloperModel.updateOne(
         { username: normalizedUsername },
         {
           $set: {
-            ingestionStatus: "not_found",
-            failureReason: "github_user_not_found",
+            ingestionStatus: "failed",
+            failure: {
+              code: "GITHUB_NOT_FOUND",
+              retryAt: new Date(now + DAY_MS),
+              failedAt: new Date(),
+            },
             lastQueuedAt: new Date(),
           },
         },
-        { upsert: true },
+        { upsert: true }
       );
 
       return {
         success: false,
         action: "user_not_found",
         username: normalizedUsername,
-        error: "github_user_not_found",
+        error: "GITHUB_NOT_FOUND",
         durationMs: Date.now() - start,
       };
     }
 
-    /* ---------------- UPSERT / UPDATE DEV ---------------- */
+    /* ---------------- UPSERT SUCCESS PATH ---------------- */
 
     if (existing) {
       await DeveloperModel.updateOne(
@@ -147,9 +212,10 @@ export const discoverDev: JobHandler = async (job) => {
         {
           $set: {
             ingestionStatus: "pending",
+            failure: null, // 🚨 clear failure on success
             lastQueuedAt: new Date(),
           },
-        },
+        }
       );
     } else {
       await DeveloperModel.create({
@@ -169,6 +235,8 @@ export const discoverDev: JobHandler = async (job) => {
       });
     }
 
+    /* ---------------- QUEUE INGEST ---------------- */
+
     await jobQueue.enqueue({
       name: "ingest:developer",
       payload: {
@@ -186,7 +254,7 @@ export const discoverDev: JobHandler = async (job) => {
     };
   } catch (error: any) {
     console.error("[Job] discover:developer failed:", error);
-    console.log("hello");
+
     return {
       success: false,
       error: error?.message || "discover_developer_failed",
