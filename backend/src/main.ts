@@ -4,7 +4,9 @@ import { connectDatabase, disconnectDatabase } from './db/connection.js'
 import { buildServer } from './server.js'
 import { registerScheduledJobs } from './jobs/scheduler.js'
 import {discoverDev} from './jobs/discover/job.js'
+import { ingestDev } from './jobs/ingest/job.js'
 import { jobQueue } from "./jobs/queue.js";
+
 async function main() {
   // 1. Validate env vars — exits cleanly if anything is missing
   const config = loadConfig()
@@ -58,12 +60,7 @@ function registerJobHandlers() {
 
   jobQueue.register('discover:developer', discoverDev);
 
-  jobQueue.register('ingest:developer', async (job) => {
-    const start = Date.now()
-    console.info(`[Job] ingest:developer — ${job.payload.username} (stub: Phase 1)`)
-    // Phase 1: fetch profile, repos, events, PRs, issues → save RawSnapshot → enqueue score:snapshot
-    return { success: true, durationMs: Date.now() - start }
-  })
+  jobQueue.register('ingest:developer', ingestDev);
 
   jobQueue.register('score:snapshot', async (job) => {
     const start = Date.now()

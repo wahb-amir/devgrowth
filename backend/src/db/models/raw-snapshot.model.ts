@@ -1,17 +1,25 @@
-import mongoose from 'mongoose'
-import type {InferSchemaType} from 'mongoose'
+import mongoose, { InferSchemaType } from "mongoose";
 
-const { Schema, model, models } = mongoose
+const { Schema, model, models } = mongoose;
 
-/**
- * Raw GitHub snapshots are intentionally untyped (Mixed)
- * to avoid fighting deeply nested API structures.
- */
+const FetchStatsSchema = new Schema(
+  {
+    totalRepos: { type: Number, required: true },
+    totalEvents: { type: Number, required: true },
+    totalExternalPRs: { type: Number, required: true },
+    totalIssues: { type: Number, required: true },
+    rateLimitRemaining: { type: Number, required: true },
+    requestsUsed: { type: Number, required: true },
+    durationMs: { type: Number, required: true },
+  },
+  { _id: false }
+);
+
 const RawSnapshotSchema = new Schema(
   {
     developerId: {
       type: Schema.Types.ObjectId,
-      ref: 'Developer',
+      ref: "Developer",
       required: true,
       index: true,
     },
@@ -20,11 +28,14 @@ const RawSnapshotSchema = new Schema(
       type: Date,
       required: true,
       index: true,
+      default: Date.now,
     },
 
+    // Use Number if you're storing versions like 1, 2, 3
     pipelineVersion: {
-      type: String,
+      type: Number,
       required: true,
+      default: 1,
     },
 
     profile: {
@@ -34,69 +45,51 @@ const RawSnapshotSchema = new Schema(
 
     repos: {
       type: [Schema.Types.Mixed],
-      required: true,
       default: [],
     },
 
     events: {
       type: [Schema.Types.Mixed],
-      required: true,
       default: [],
     },
 
     externalPRs: {
       type: [Schema.Types.Mixed],
-      required: true,
       default: [],
     },
 
     issues: {
       type: [Schema.Types.Mixed],
-      required: true,
       default: [],
     },
 
     fetchStats: {
-      totalRepos: { type: Number, required: true },
-      totalEvents: { type: Number, required: true },
-      totalExternalPRs: { type: Number, required: true },
-      totalIssues: { type: Number, required: true },
-      rateLimitRemaining: { type: Number, required: true },
-      requestsUsed: { type: Number, required: true },
-      durationMs: { type: Number, required: true },
+      type: FetchStatsSchema,
+      required: true,
     },
   },
   {
     timestamps: true,
-
     toJSON: {
       virtuals: true,
       transform: (_doc, ret) => {
-        const obj = ret as any
-        obj.id = obj._id.toString()
-        delete obj._id
-        delete obj.__v
-        return obj
+        const obj = ret as any;
+        obj.id = obj._id.toString();
+        delete obj._id;
+        delete obj.__v;
+        return obj;
       },
     },
   }
-)
+);
 
-/**
- * Indexes
- */
-RawSnapshotSchema.index({ developerId: 1, takenAt: -1 })
-
+RawSnapshotSchema.index({ developerId: 1, takenAt: -1 });
 RawSnapshotSchema.index(
   { takenAt: 1 },
   { expireAfterSeconds: 60 * 60 * 24 * 180 }
-)
+);
 
+export type RawSnapshot = InferSchemaType<typeof RawSnapshotSchema>;
 
-export type RawSnapshot = InferSchemaType<typeof RawSnapshotSchema>
-
-/**
- * Model export
- */
 export const RawSnapshotModel =
-  models.RawSnapshot ?? model<RawSnapshot>('RawSnapshot', RawSnapshotSchema)
+  models.RawSnapshot ?? model<RawSnapshot>("RawSnapshot", RawSnapshotSchema);
