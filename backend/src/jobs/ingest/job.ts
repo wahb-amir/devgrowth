@@ -6,6 +6,8 @@ const GITHUB_API_BASE = "https://api.github.com";
 const PIPELINE_VERSION = 1;
 const COOLDOWN_MS = 24 * 60 * 60 * 1000;
 
+/* ---------------- TYPES ---------------- */
+
 type GitHubProfile = {
   id: number;
   login: string;
@@ -24,10 +26,8 @@ type GitHubRepo = {
   stargazers_count: number;
   forks_count: number;
   language: string | null;
-  fork: boolean;
   archived: boolean;
   disabled: boolean;
-  updated_at: string;
 };
 
 type GitHubEvent = {
@@ -36,117 +36,129 @@ type GitHubEvent = {
 };
 
 type FetchStats = {
-  totalRepos: number;
-  totalEvents: number;
-  totalExternalPRs: number;
-  totalIssues: number;
   rateLimitRemaining: number;
   requestsUsed: number;
   durationMs: number;
 };
 
+/* ---------------- FETCH HELPERS ---------------- */
+
 function githubHeaders() {
-  const token = process.env.GITHUB_TOKEN;
   return {
     Accept: "application/vnd.github+json",
-    ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    ...(process.env.GITHUB_TOKEN
+      ? { Authorization: `Bearer ${process.env.GITHUB_TOKEN}` }
+      : {}),
   };
 }
 
-async function fetchJson<T>(
-  url: string,
-  stats: { requestsUsed: number; rateLimitRemaining: number },
-): Promise<T> {
-  stats.requestsUsed += 1;
+async function fetchJson<T>(url: string, stats: FetchStats): Promise<T> {
+  stats.requestsUsed++;
 
   const res = await fetch(url, { headers: githubHeaders() });
 
   const remaining = res.headers.get("x-ratelimit-remaining");
-  if (remaining !== null) {
-    const parsed = Number(remaining);
-    if (!Number.isNaN(parsed)) stats.rateLimitRemaining = parsed;
-  }
+  if (remaining) stats.rateLimitRemaining = Number(remaining);
 
   if (!res.ok) {
     const body = await res.text().catch(() => "");
-    throw new Error(`github_api_error_${res.status}${body ? `: ${body}` : ""}`);
+    throw new Error(`github_api_error_${res.status}: ${body}`);
   }
 
   return (await res.json()) as T;
 }
 
 async function fetchAllPages<T>(
-  buildUrl: (page: number) => string,
-  stats: { requestsUsed: number; rateLimitRemaining: number },
-  maxPages = 5,
+  buildUrl: (p: number) => string,
+  stats: FetchStats,
+  maxPages = 3,
 ) {
   const all: T[] = [];
 
   for (let page = 1; page <= maxPages; page++) {
-    const items = await fetchJson<T[]>(buildUrl(page), stats);
-    if (!items.length) break;
-    all.push(...items);
-    if (items.length < 100) break;
+    const data = await fetchJson<T[]>(buildUrl(page), stats);
+    if (!data.length) break;
+    all.push(...data);
+    if (data.length < 100) break;
   }
 
   return all;
 }
 
 async function fetchGithubData(username: string) {
-  const stats = { requestsUsed: 0, rateLimitRemaining: 0 };
+  const stats: FetchStats = {
+    rateLimitRemaining: 0,
+    requestsUsed: 0,
+    durationMs: 0,
+  };
 
-  const profileUrl = `${GITHUB_API_BASE}/users/${encodeURIComponent(username)}`;
-  const reposUrl = (page: number) =>
-    `${GITHUB_API_BASE}/users/${encodeURIComponent(username)}/repos?per_page=100&page=${page}&sort=updated`;
-  const eventsUrl = (page: number) =>
-    `${GITHUB_API_BASE}/users/${encodeURIComponent(username)}/events?per_page=100&page=${page}`;
+  const start = Date.now();
 
-  const profile = await fetchJson<GitHubProfile>(profileUrl, stats);
-  const repos = await fetchAllPages<GitHubRepo>(reposUrl, stats, 10);
-  const events = await fetchAllPages<GitHubEvent>(eventsUrl, stats, 3);
+  const profile = await fetchJson<GitHubProfile>(
+    `${GITHUB_API_BASE}/users/${username}`,
+    stats,
+  );
+
+  const repos = await fetchAllPages<GitHubRepo>(
+    (p) =>
+      `${GITHUB_API_BASE}/users/${username}/repos?per_page=100&page=${p}`,
+    stats,
+    5,
+  );
+
+  const events = await fetchAllPages<GitHubEvent>(
+    (p) =>
+      `${GITHUB_API_BASE}/users/${username}/events?per_page=100&page=${p}`,
+    stats,
+    2,
+  );
+
+  stats.durationMs = Date.now() - start;
 
   return { profile, repos, events, stats };
 }
 
-function normalizeSignals(
-  profile: GitHubProfile,
-  repos: GitHubRepo[],
-  events: GitHubEvent[],
-) {
+/* ---------------- NORMALIZATION ---------------- */
+
+function normalize(profile: GitHubProfile, repos: GitHubRepo[], events: GitHubEvent[]) {
   const cutoff = Date.now() - 30 * 24 * 60 * 60 * 1000;
-  const activeEvents = events.filter(
-    (event) => new Date(event.created_at).getTime() >= cutoff,
+
+  const recent = events.filter(
+    (e) => new Date(e.created_at).getTime() >= cutoff,
   );
 
   const languages: Record<string, number> = {};
   let stars = 0;
   let forks = 0;
 
-  for (const repo of repos) {
-    if (!repo.archived && !repo.disabled) {
-      stars += repo.stargazers_count || 0;
-      forks += repo.forks_count || 0;
+  for (const r of repos) {
+    if (r.archived || r.disabled) continue;
 
-      if (repo.language) {
-        languages[repo.language] = (languages[repo.language] || 0) + 1;
-      }
+    stars += r.stargazers_count || 0;
+    forks += r.forks_count || 0;
+
+    if (r.language) {
+      languages[r.language] = (languages[r.language] || 0) + 1;
     }
   }
 
   return {
-    followers: profile.followers || 0,
-    repos: repos.length,
-    stars,
-    forks,
-    languages,
+    repoStats: {
+      totalRepos: repos.length,
+      totalStars: stars,
+      totalForks: forks,
+      languages,
+    },
     activity_30d: {
-      pushes: activeEvents.filter((e) => e.type === "PushEvent").length,
-      prs: activeEvents.filter((e) => e.type === "PullRequestEvent").length,
-      issues: activeEvents.filter((e) => e.type === "IssuesEvent").length,
-      releases: activeEvents.filter((e) => e.type === "ReleaseEvent").length,
+      pushes: recent.filter((e) => e.type === "PushEvent").length,
+      prs: recent.filter((e) => e.type === "PullRequestEvent").length,
+      issues: recent.filter((e) => e.type === "IssuesEvent").length,
+      releases: recent.filter((e) => e.type === "ReleaseEvent").length,
     },
   };
 }
+
+/* ---------------- JOB ---------------- */
 
 export const ingestDev: JobHandler = async (job) => {
   const start = Date.now();
@@ -156,28 +168,30 @@ export const ingestDev: JobHandler = async (job) => {
     throw new Error("username_required");
   }
 
-  const normalizedUsername = username.trim().toLowerCase();
-  
-  const existing = await DeveloperModel.findOne({
-    username: normalizedUsername,
-  }).lean();
+  const normalized = username.trim().toLowerCase();
 
-  const isFresh =
+  /* ---------------- COOLDOWN CHECK ---------------- */
+  const existing = await DeveloperModel.findOne({ username: normalized }).lean();
+
+  if (
     existing?.lastFetchedAt &&
-    Date.now() - new Date(existing.lastFetchedAt).getTime() < COOLDOWN_MS;
-
-  if (existing && isFresh) {
+    Date.now() - new Date(existing.lastFetchedAt).getTime() < COOLDOWN_MS
+  ) {
     return {
       success: true,
       action: "skipped_cooldown",
-      username: normalizedUsername,
+      username: normalized,
       durationMs: Date.now() - start,
     };
   }
 
   try {
-    const lockedDev = await DeveloperModel.findOneAndUpdate(
-      { username: normalizedUsername },
+    /* ---------------- LOCK ---------------- */
+    const locked = await DeveloperModel.findOneAndUpdate(
+      {
+        username: normalized,
+        ingestionStatus: { $ne: "processing" },
+      },
       {
         $set: {
           ingestionStatus: "processing",
@@ -186,128 +200,94 @@ export const ingestDev: JobHandler = async (job) => {
           failureReason: null,
         },
         $setOnInsert: {
-          username: normalizedUsername,
-          githubId: 0,
+          username: normalized,
           source: "ingest",
-          metadata: {},
+          githubId: 0,
         },
       },
-      {
-        upsert: true,
-        returnDocument: "after",
-        setDefaultsOnInsert: true,
-      },
+      { upsert: true, new: true },
     );
 
-    if (!lockedDev?._id) {
-      throw new Error("developer_lock_failed");
-    }
+    if (!locked?._id) throw new Error("lock_failed");
 
+    /* ---------------- FETCH ---------------- */
     const { profile, repos, events, stats } =
-      await fetchGithubData(normalizedUsername);
+      await fetchGithubData(normalized);
 
-    if (!profile) throw new Error("github_profile_missing");
+    /* ---------------- NORMALIZE ---------------- */
+    const normalizedData = normalize(profile, repos, events);
 
-    const normalized = normalizeSignals(profile, repos, events);
-    const externalPRs = events.filter((e) => e.type === "PullRequestEvent");
-    const issues = events.filter((e) => e.type === "IssuesEvent");
-
+    /* ---------------- UPDATE DEV ---------------- */
     await DeveloperModel.updateOne(
-      { username: normalizedUsername },
+      { username: normalized },
       {
         $set: {
           githubId: profile.id,
-          source: lockedDev.source || "ingest",
           metadata: {
             name: profile.name,
             avatarUrl: profile.avatar_url,
             bio: profile.bio,
             location: profile.location,
             company: profile.company,
-            blog: profile.blog,
           },
-          ingestionStatus: "processing",
           lastFetchedAt: new Date(),
+          ingestionStatus: "completed",
+          ingestionLock: false,
         },
       },
     );
 
+    /* ---------------- SNAPSHOT (CLEAN) ---------------- */
     const snapshot = await RawSnapshotModel.create({
-      developerId: lockedDev._id,
+      developerId: locked._id,
       takenAt: new Date(),
       pipelineVersion: PIPELINE_VERSION,
+
       profile: {
         id: profile.id,
         login: profile.login,
-        name: profile.name,
-        avatar_url: profile.avatar_url,
-        bio: profile.bio,
-        location: profile.location,
-        company: profile.company,
-        blog: profile.blog,
-        public_repos: profile.public_repos,
         followers: profile.followers,
+        public_repos: profile.public_repos,
         created_at: profile.created_at,
       },
-      repos,
-      events,
-      externalPRs,
-      issues,
+
+      repoStats: normalizedData.repoStats,
+      activity_30d: normalizedData.activity_30d,
+
       fetchStats: {
-        totalRepos: repos.length,
-        totalEvents: events.length,
-        totalExternalPRs: externalPRs.length,
-        totalIssues: issues.length,
         rateLimitRemaining: stats.rateLimitRemaining,
         requestsUsed: stats.requestsUsed,
-        durationMs: Date.now() - start,
-      } satisfies FetchStats,
+        durationMs: stats.durationMs,
+      },
     });
 
+    /* ---------------- QUEUE SCORE ---------------- */
     await jobQueue.enqueue({
       name: "score:developer",
       payload: {
-        username: normalizedUsername,
+        username: normalized,
         rawSnapshotId: snapshot._id,
       },
     });
 
-    await DeveloperModel.updateOne(
-      { username: normalizedUsername },
-      {
-        $set: {
-          ingestionStatus: "completed",
-          ingestionLock: false,
-          ingestionLockAt: null,
-          failureReason: null,
-          lastFetchedAt: new Date(),
-        },
-      },
-    );
-
     return {
       success: true,
       action: "queued_scoring",
-      username: normalizedUsername,
+      username: normalized,
       durationMs: Date.now() - start,
     };
-  } catch (error: unknown) {
-    const message =
-      error instanceof Error ? error.message : "ingest_developer_failed";
-
+  } catch (err) {
     await DeveloperModel.updateOne(
-      { username: normalizedUsername },
+      { username: normalized },
       {
         $set: {
           ingestionStatus: "failed",
-          failureReason: message,
           ingestionLock: false,
-          ingestionLockAt: null,
+          failureReason: err instanceof Error ? err.message : "error",
         },
       },
     );
 
-    console.error("[Job] ingest:developer failed:", error);
-    throw error instanceof Error ? error : new Error(message);
+    throw err;
   }
 };

@@ -1,11 +1,7 @@
-import mongoose from 'mongoose'
-import type {InferSchemaType} from 'mongoose'
+import mongoose, { InferSchemaType } from "mongoose";
 
-const { Schema, model, models } = mongoose
+const { Schema, model, models } = mongoose;
 
-/**
- * 1. Scoring Signal
- */
 const ScoringSignalSchema = new Schema(
   {
     key: { type: String, required: true },
@@ -16,44 +12,66 @@ const ScoringSignalSchema = new Schema(
     maxPoints: { type: Number, required: true },
   },
   { _id: false }
-)
+);
 
-/**
- * 2. Sub Score
- */
 const SubScoreSchema = new Schema(
   {
     score: { type: Number, required: true, min: 0, max: 100 },
     weight: { type: Number, required: true },
     weightedScore: { type: Number, required: true },
-    signals: { type: [ScoringSignalSchema], required: true, default: [] },
-    tags: { type: [String], required: true, default: [] },
+    signals: { type: [ScoringSignalSchema], default: [] },
+    tags: { type: [String], default: [] },
   },
   { _id: false }
-)
+);
 
-/**
- * 3. Main Scored Snapshot Schema
- */
+const NormalizedProfileSchema = new Schema(
+  {
+    followers: { type: Number, default: 0 },
+    repos: { type: Number, default: 0 },
+    stars: { type: Number, default: 0 },
+    forks: { type: Number, default: 0 },
+    activity_30d: {
+      pushes: { type: Number, default: 0 },
+      prs: { type: Number, default: 0 },
+      issues: { type: Number, default: 0 },
+      releases: { type: Number, default: 0 },
+    },
+  },
+  { _id: false }
+);
+
 const ScoredSnapshotSchema = new Schema(
   {
     developerId: {
       type: Schema.Types.ObjectId,
-      ref: 'Developer',
+      ref: "Developer",
       required: true,
       index: true,
     },
 
     rawSnapshotId: {
       type: Schema.Types.ObjectId,
-      ref: 'RawSnapshot',
+      ref: "RawSnapshot",
       required: true,
+      index: true,
     },
 
-    takenAt: { type: Date, required: true },
-    scoredAt: { type: Date, required: true, default: Date.now },
+    takenAt: {
+      type: Date,
+      required: true,
+      index: true,
+    },
 
-    scorerVersion: { type: String, required: true },
+    scoredAt: {
+      type: Date,
+      default: Date.now,
+    },
+
+    scorerVersion: {
+      type: String,
+      required: true,
+    },
 
     totalScore: {
       type: Number,
@@ -63,7 +81,21 @@ const ScoredSnapshotSchema = new Schema(
       index: true,
     },
 
-    percentileRank: { type: Number, default: null },
+    percentileRank: {
+      type: Number,
+      default: null,
+    },
+
+    devType: {
+      type: String,
+      default: "balanced",
+      index: true,
+    },
+
+    growthScore: {
+      type: Number,
+      default: 0,
+    },
 
     subScores: {
       activity: { type: SubScoreSchema, required: true },
@@ -73,38 +105,30 @@ const ScoredSnapshotSchema = new Schema(
     },
 
     normalizedProfile: {
-      type: Schema.Types.Mixed,
+      type: NormalizedProfileSchema,
       required: true,
     },
   },
   {
     timestamps: true,
-
     toJSON: {
       virtuals: true,
       transform: (_doc, ret) => {
-        const obj = ret as any
-        obj.id = obj._id.toString()
-        delete obj._id
-        delete obj.__v
-        return obj
+        const obj = ret as any;
+        obj.id = obj._id.toString();
+        delete obj._id;
+        delete obj.__v;
+        return obj;
       },
     },
   }
-)
+);
 
-/**
- * 4. Indexes
- */
-ScoredSnapshotSchema.index({ developerId: 1, takenAt: -1 })
-ScoredSnapshotSchema.index({ totalScore: -1, takenAt: -1 })
+ScoredSnapshotSchema.index({ developerId: 1, takenAt: -1 });
+ScoredSnapshotSchema.index({ totalScore: -1, takenAt: -1 });
 
+export type ScoredSnapshot = InferSchemaType<typeof ScoredSnapshotSchema>;
 
-export type ScoredSnapshot = InferSchemaType<typeof ScoredSnapshotSchema>
-
-/**
- * 6. Model export
- */
 export const ScoredSnapshotModel =
   models.ScoredSnapshot ??
-  model<ScoredSnapshot>('ScoredSnapshot', ScoredSnapshotSchema)
+  model<ScoredSnapshot>("ScoredSnapshot", ScoredSnapshotSchema);

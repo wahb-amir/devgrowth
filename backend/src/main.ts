@@ -6,6 +6,8 @@ import { registerScheduledJobs } from './jobs/scheduler.js'
 import {discoverDev} from './jobs/discover/job.js'
 import { ingestDev } from './jobs/ingest/job.js'
 import { jobQueue } from "./jobs/queue.js";
+import { scoreDev } from './jobs/score/job.js';
+
 
 async function main() {
   // 1. Validate env vars — exits cleanly if anything is missing
@@ -62,12 +64,7 @@ function registerJobHandlers() {
 
   jobQueue.register('ingest:developer', ingestDev);
 
-  jobQueue.register('score:snapshot', async (job) => {
-    const start = Date.now()
-    console.info(`[Job] score:snapshot — ${job.payload.rawSnapshotId} (stub: Phase 2)`)
-    // Phase 2: normalize raw data → run scoring functions → save ScoredSnapshot → enqueue generate:insights
-    return { success: true, durationMs: Date.now() - start }
-  })
+  jobQueue.register('score:developer', scoreDev);
 
   jobQueue.register('generate:insights', async (job) => {
     const start = Date.now()
