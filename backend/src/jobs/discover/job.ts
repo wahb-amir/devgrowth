@@ -2,9 +2,68 @@ import { DeveloperModel } from "../../db/models/developer.model.js";
 import { jobQueue, JobHandler } from "../queue.js";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
+const GITHUB_API_BASE = "https://api.github.com";
+
+/* ---------------- TYPES ---------------- */
+
+type GitHubProfile = {
+  id: number;
+  login: string;
+  name: string | null;
+  avatar_url: string;
+  bio: string | null;
+  location: string | null;
+  company: string | null;
+  blog: string | null;
+  public_repos: number;
+  followers: number;
+  created_at: string;
+};
+
+/* ---------------- GITHUB PRE-FLIGHT ---------------- */
+
+async function fetchGithubProfile(
+  username: string,
+): Promise<GitHubProfile | null> {
+  const res = await fetch(`${GITHUB_API_BASE}/users/${username}`, {
+    headers: {
+      Accept: "application/vnd.github+json",
+      ...(process.env.GITHUB_TOKEN
+        ? { Authorization: `Bearer ${process.env.GITHUB_TOKEN}` }
+        : {}),
+    },
+  });
+
+  if (res.status === 404) return null;
+
+  // IMPORTANT: classify retryable errors
+  if (res.status === 403 || res.status === 429) {
+    const err = new Error(`github_rate_limit_${res.status}`);
+    (err as any).retryable = true;
+    throw err;
+  }
+
+  if (res.status >= 500) {
+    const err = new Error(`github_server_error_${res.status}`);
+    (err as any).retryable = true;
+    throw err;
+  }
+
+  if (!res.ok) {
+    const err = new Error(`github_unknown_error_${res.status}`);
+    (err as any).retryable = false;
+    throw err;
+  }
+
+  return (await res.json()) as GitHubProfile;
+}
+/* ---------------- JOB ---------------- */
 
 /**
  * discover:developer
+ * - validates user exists on GitHub
+ * - enriches profile once
+ * - passes data to ingest (no duplicate fetch)
  */
 export const discoverDev: JobHandler = async (job) => {
   const start = Date.now();
@@ -23,11 +82,13 @@ export const discoverDev: JobHandler = async (job) => {
     const normalizedUsername = username.trim().toLowerCase();
     console.info(`[Job] discover:developer — ${normalizedUsername}`);
 
+    /* ---------------- DB LOOKUP ---------------- */
+
     const existing = await DeveloperModel.findOne({
       username: normalizedUsername,
     });
 
-    // CASE A — Already processing
+    // CASE A — already processing
     if (existing?.ingestionStatus === "processing") {
       return {
         success: true,
@@ -37,7 +98,7 @@ export const discoverDev: JobHandler = async (job) => {
       };
     }
 
-    // CASE B — Already fresh
+    // CASE B — fresh
     const isFresh =
       existing?.lastFetchedAt &&
       Date.now() - new Date(existing.lastFetchedAt).getTime() < DAY_MS;
@@ -51,7 +112,35 @@ export const discoverDev: JobHandler = async (job) => {
       };
     }
 
-    // CASE C — Exists but stale
+    /* ---------------- PRE-FLIGHT GITHUB CHECK ---------------- */
+
+    const profile = await fetchGithubProfile(normalizedUsername);
+
+    // ❌ user does not exist → stop pipeline early
+    if (!profile) {
+      await DeveloperModel.updateOne(
+        { username: normalizedUsername },
+        {
+          $set: {
+            ingestionStatus: "not_found",
+            failureReason: "github_user_not_found",
+            lastQueuedAt: new Date(),
+          },
+        },
+        { upsert: true },
+      );
+
+      return {
+        success: false,
+        action: "user_not_found",
+        username: normalizedUsername,
+        error: "github_user_not_found",
+        durationMs: Date.now() - start,
+      };
+    }
+
+    /* ---------------- UPSERT / UPDATE DEV ---------------- */
+
     if (existing) {
       await DeveloperModel.updateOne(
         { username: normalizedUsername },
@@ -60,30 +149,31 @@ export const discoverDev: JobHandler = async (job) => {
             ingestionStatus: "pending",
             lastQueuedAt: new Date(),
           },
-        }
+        },
       );
-    }
-
-    // CASE D — New developer
-    if (!existing) {
+    } else {
       await DeveloperModel.create({
         username: normalizedUsername,
-        githubId: 0,
+        githubId: profile.id,
         ingestionStatus: "pending",
         source: source || "discovery",
         lastQueuedAt: new Date(),
         metadata: {
-          avatarUrl: `https://github.com/identicons/${normalizedUsername}`,
-          githubCreatedAt: new Date(),
+          name: profile.name,
+          avatarUrl: profile.avatar_url,
+          bio: profile.bio,
+          location: profile.location,
+          company: profile.company,
+          githubCreatedAt: profile.created_at,
         },
       });
     }
 
-    // enqueue ingest
     await jobQueue.enqueue({
       name: "ingest:developer",
       payload: {
         username: normalizedUsername,
+        profile,
         priority: source === "manual" ? 10 : 5,
       },
     });
@@ -94,12 +184,13 @@ export const discoverDev: JobHandler = async (job) => {
       username: normalizedUsername,
       durationMs: Date.now() - start,
     };
-  } catch (error: unknown) {
+  } catch (error: any) {
     console.error("[Job] discover:developer failed:", error);
-
+    console.log("hello");
     return {
       success: false,
-      error: error instanceof Error ? error.message : "discover_developer_failed",
+      error: error?.message || "discover_developer_failed",
+      retryable: error?.retryable ?? false,
       durationMs: Date.now() - start,
     };
   }

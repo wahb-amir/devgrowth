@@ -41,7 +41,7 @@ type FetchStats = {
   durationMs: number;
 };
 
-/* ---------------- FETCH HELPERS ---------------- */
+/* ---------------- HELPERS ---------------- */
 
 function githubHeaders() {
   return {
@@ -62,7 +62,12 @@ async function fetchJson<T>(url: string, stats: FetchStats): Promise<T> {
 
   if (!res.ok) {
     const body = await res.text().catch(() => "");
-    throw new Error(`github_api_error_${res.status}: ${body}`);
+
+    const error = new Error(`github_api_error_${res.status}: ${body}`);
+    (error as any).status = res.status;
+    (error as any).retryable = res.status >= 500;
+
+    throw error;
   }
 
   return (await res.json()) as T;
@@ -85,42 +90,25 @@ async function fetchAllPages<T>(
   return all;
 }
 
-async function fetchGithubData(username: string) {
-  const stats: FetchStats = {
-    rateLimitRemaining: 0,
-    requestsUsed: 0,
-    durationMs: 0,
-  };
+/* ---------------- OPTIONAL FALLBACK FETCH ---------------- */
 
-  const start = Date.now();
+async function fetchGithubProfile(username: string): Promise<GitHubProfile> {
+  const res = await fetch(`${GITHUB_API_BASE}/users/${username}`, {
+    headers: githubHeaders(),
+  });
 
-  const profile = await fetchJson<GitHubProfile>(
-    `${GITHUB_API_BASE}/users/${username}`,
-    stats,
-  );
+  if (!res.ok) throw new Error(`github_api_error_${res.status}`);
 
-  const repos = await fetchAllPages<GitHubRepo>(
-    (p) =>
-      `${GITHUB_API_BASE}/users/${username}/repos?per_page=100&page=${p}`,
-    stats,
-    5,
-  );
-
-  const events = await fetchAllPages<GitHubEvent>(
-    (p) =>
-      `${GITHUB_API_BASE}/users/${username}/events?per_page=100&page=${p}`,
-    stats,
-    2,
-  );
-
-  stats.durationMs = Date.now() - start;
-
-  return { profile, repos, events, stats };
+  return (await res.json()) as GitHubProfile;
 }
 
-/* ---------------- NORMALIZATION ---------------- */
+/* ---------------- NORMALIZE ---------------- */
 
-function normalize(profile: GitHubProfile, repos: GitHubRepo[], events: GitHubEvent[]) {
+function normalize(
+  profile: GitHubProfile,
+  repos: GitHubRepo[],
+  events: GitHubEvent[],
+) {
   const cutoff = Date.now() - 30 * 24 * 60 * 60 * 1000;
 
   const recent = events.filter(
@@ -162,7 +150,8 @@ function normalize(profile: GitHubProfile, repos: GitHubRepo[], events: GitHubEv
 
 export const ingestDev: JobHandler = async (job) => {
   const start = Date.now();
-  const { username } = job.payload || {};
+
+  const { username, profile: incomingProfile } = job.payload || {};
 
   if (!username || typeof username !== "string") {
     throw new Error("username_required");
@@ -170,8 +159,11 @@ export const ingestDev: JobHandler = async (job) => {
 
   const normalized = username.trim().toLowerCase();
 
-  /* ---------------- COOLDOWN CHECK ---------------- */
-  const existing = await DeveloperModel.findOne({ username: normalized }).lean();
+  /* ---------------- COOLDOWN ---------------- */
+
+  const existing = await DeveloperModel.findOne({
+    username: normalized,
+  }).lean();
 
   if (
     existing?.lastFetchedAt &&
@@ -187,6 +179,7 @@ export const ingestDev: JobHandler = async (job) => {
 
   try {
     /* ---------------- LOCK ---------------- */
+
     const locked = await DeveloperModel.findOneAndUpdate(
       {
         username: normalized,
@@ -210,14 +203,39 @@ export const ingestDev: JobHandler = async (job) => {
 
     if (!locked?._id) throw new Error("lock_failed");
 
-    /* ---------------- FETCH ---------------- */
-    const { profile, repos, events, stats } =
-      await fetchGithubData(normalized);
+    /* ---------------- PROFILE (REUSE OR FALLBACK) ---------------- */
+
+    const profile: GitHubProfile =
+      incomingProfile ?? (await fetchGithubProfile(normalized));
+
+    /* ---------------- DATA FETCH (ONLY HEAVY PART) ---------------- */
+
+    const stats: FetchStats = {
+      rateLimitRemaining: 0,
+      requestsUsed: 0,
+      durationMs: 0,
+    };
+
+    const repos = await fetchAllPages<GitHubRepo>(
+      (p) =>
+        `${GITHUB_API_BASE}/users/${normalized}/repos?per_page=100&page=${p}`,
+      stats,
+      5,
+    );
+
+    const events = await fetchAllPages<GitHubEvent>(
+      (p) =>
+        `${GITHUB_API_BASE}/users/${normalized}/events?per_page=100&page=${p}`,
+      stats,
+      2,
+    );
 
     /* ---------------- NORMALIZE ---------------- */
+
     const normalizedData = normalize(profile, repos, events);
 
     /* ---------------- UPDATE DEV ---------------- */
+
     await DeveloperModel.updateOne(
       { username: normalized },
       {
@@ -237,7 +255,8 @@ export const ingestDev: JobHandler = async (job) => {
       },
     );
 
-    /* ---------------- SNAPSHOT (CLEAN) ---------------- */
+    /* ---------------- SNAPSHOT ---------------- */
+
     const snapshot = await RawSnapshotModel.create({
       developerId: locked._id,
       takenAt: new Date(),
@@ -261,7 +280,8 @@ export const ingestDev: JobHandler = async (job) => {
       },
     });
 
-    /* ---------------- QUEUE SCORE ---------------- */
+    /* ---------------- SCORE JOB ---------------- */
+
     await jobQueue.enqueue({
       name: "score:developer",
       payload: {
@@ -277,16 +297,27 @@ export const ingestDev: JobHandler = async (job) => {
       durationMs: Date.now() - start,
     };
   } catch (err) {
-    await DeveloperModel.updateOne(
-      { username: normalized },
-      {
-        $set: {
-          ingestionStatus: "failed",
-          ingestionLock: false,
-          failureReason: err instanceof Error ? err.message : "error",
+    const status = (err as any).status;
+
+    if (status === 404) {
+      await DeveloperModel.updateOne(
+        { username: normalized },
+        {
+          $set: {
+            ingestionStatus: "not_found",
+            ingestionLock: false,
+            failureReason: "github_user_not_found",
+          },
         },
-      },
-    );
+      );
+
+      return {
+        success: false,
+        action: "user_not_found",
+        username: normalized,
+        durationMs: Date.now() - start,
+      };
+    }
 
     throw err;
   }
