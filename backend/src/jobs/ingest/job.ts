@@ -4,6 +4,7 @@ import { jobQueue, JobHandler } from "../queue.js";
 
 const GITHUB_API_BASE = "https://api.github.com";
 const PIPELINE_VERSION = 1;
+const COOLDOWN_MS = 24 * 60 * 60 * 1000;
 
 type GitHubProfile = {
   id: number;
@@ -54,7 +55,7 @@ function githubHeaders() {
 
 async function fetchJson<T>(
   url: string,
-  stats: { requestsUsed: number; rateLimitRemaining: number }
+  stats: { requestsUsed: number; rateLimitRemaining: number },
 ): Promise<T> {
   stats.requestsUsed += 1;
 
@@ -77,7 +78,7 @@ async function fetchJson<T>(
 async function fetchAllPages<T>(
   buildUrl: (page: number) => string,
   stats: { requestsUsed: number; rateLimitRemaining: number },
-  maxPages = 5
+  maxPages = 5,
 ) {
   const all: T[] = [];
 
@@ -110,11 +111,11 @@ async function fetchGithubData(username: string) {
 function normalizeSignals(
   profile: GitHubProfile,
   repos: GitHubRepo[],
-  events: GitHubEvent[]
+  events: GitHubEvent[],
 ) {
   const cutoff = Date.now() - 30 * 24 * 60 * 60 * 1000;
   const activeEvents = events.filter(
-    (event) => new Date(event.created_at).getTime() >= cutoff
+    (event) => new Date(event.created_at).getTime() >= cutoff,
   );
 
   const languages: Record<string, number> = {};
@@ -156,6 +157,23 @@ export const ingestDev: JobHandler = async (job) => {
   }
 
   const normalizedUsername = username.trim().toLowerCase();
+  
+  const existing = await DeveloperModel.findOne({
+    username: normalizedUsername,
+  }).lean();
+
+  const isFresh =
+    existing?.lastFetchedAt &&
+    Date.now() - new Date(existing.lastFetchedAt).getTime() < COOLDOWN_MS;
+
+  if (existing && isFresh) {
+    return {
+      success: true,
+      action: "skipped_cooldown",
+      username: normalizedUsername,
+      durationMs: Date.now() - start,
+    };
+  }
 
   try {
     const lockedDev = await DeveloperModel.findOneAndUpdate(
@@ -178,16 +196,15 @@ export const ingestDev: JobHandler = async (job) => {
         upsert: true,
         returnDocument: "after",
         setDefaultsOnInsert: true,
-      }
+      },
     );
 
     if (!lockedDev?._id) {
       throw new Error("developer_lock_failed");
     }
 
-    const { profile, repos, events, stats } = await fetchGithubData(
-      normalizedUsername
-    );
+    const { profile, repos, events, stats } =
+      await fetchGithubData(normalizedUsername);
 
     if (!profile) throw new Error("github_profile_missing");
 
@@ -212,7 +229,7 @@ export const ingestDev: JobHandler = async (job) => {
           ingestionStatus: "processing",
           lastFetchedAt: new Date(),
         },
-      }
+      },
     );
 
     const snapshot = await RawSnapshotModel.create({
@@ -265,7 +282,7 @@ export const ingestDev: JobHandler = async (job) => {
           failureReason: null,
           lastFetchedAt: new Date(),
         },
-      }
+      },
     );
 
     return {
@@ -287,7 +304,7 @@ export const ingestDev: JobHandler = async (job) => {
           ingestionLock: false,
           ingestionLockAt: null,
         },
-      }
+      },
     );
 
     console.error("[Job] ingest:developer failed:", error);
