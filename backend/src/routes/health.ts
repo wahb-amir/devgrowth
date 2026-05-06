@@ -1,16 +1,16 @@
+import type { FastifyInstance } from 'fastify'
 import { getDatabaseStatus } from '../db/connection.js'
-import { getRateLimitStatus } from '../lib/github-client.js'
+import { getRateLimitStatus } from '../lib/github-service.js'
 import { jobQueue } from '../jobs/queue.js'
 import { getConfig } from '../lib/config.js'
 
 /** @param {import('fastify').FastifyInstance} fastify */
-export async function healthRoutes(fastify) {
+export async function healthRoutes(fastify: FastifyInstance) {
   // GET /health — basic liveness probe
   fastify.get('/health', async (_req, reply) => {
     return reply.send({ status: 'ok', timestamp: new Date().toISOString() })
   })
 
-  // GET /health/ready — checks all dependencies (suitable for k8s readiness probe)
   fastify.get('/health/ready', async (_req, reply) => {
     const config = getConfig()
     const db = getDatabaseStatus()

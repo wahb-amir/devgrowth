@@ -1,7 +1,10 @@
 import mongoose from 'mongoose'
+import type {InferSchemaType} from 'mongoose'
 
 const { Schema, model, models } = mongoose
-
+/**
+ * 1. Metadata Type
+ */
 const DeveloperMetadataSchema = new Schema(
   {
     name: { type: String, default: null },
@@ -18,15 +21,25 @@ const DeveloperMetadataSchema = new Schema(
   { _id: false }
 )
 
+/**
+ * 2. Main Schema
+ */
 const DeveloperSchema = new Schema(
   {
     githubId: { type: Number, required: true, unique: true, index: true },
-    username: { type: String, required: true, unique: true, index: true, lowercase: true },
+    username: {
+      type: String,
+      required: true,
+      unique: true,
+      index: true,
+      lowercase: true,
+    },
     indexedAt: { type: Date, required: true, default: Date.now },
     lastFetchedAt: { type: Date, default: null },
     trackingEnabled: { type: Boolean, required: true, default: true },
     claimed: { type: Boolean, required: true, default: false },
     claimedAt: { type: Date },
+
     ingestionStatus: {
       type: String,
       enum: ['pending', 'running', 'complete', 'failed'],
@@ -34,25 +47,45 @@ const DeveloperSchema = new Schema(
       default: 'pending',
       index: true,
     },
+
     metadata: { type: DeveloperMetadataSchema, required: true },
   },
   {
     timestamps: true,
     toJSON: {
       virtuals: true,
-      transform: (_doc, ret) => {
-        ret.id = ret._id.toString()
-        delete ret._id
-        delete ret.__v
-        return ret
-      },
+     transform: (_doc, ret) => {
+      const obj = ret as any
+
+      obj.id = obj._id.toString()
+      delete obj._id
+      delete obj.__v
+
+      return obj
+}
     },
   }
 )
 
-// For the daily ingestion job: find tracked developers due for a refresh
-DeveloperSchema.index({ trackingEnabled: 1, lastFetchedAt: 1, ingestionStatus: 1 })
-// For the dashboard: recently claimed developers
-DeveloperSchema.index({ claimed: 1, claimedAt: -1 })
+/**
+ * 3. Indexes
+ */
+DeveloperSchema.index({
+  trackingEnabled: 1,
+  lastFetchedAt: 1,
+  ingestionStatus: 1,
+})
 
-export const DeveloperModel = models['Developer'] ?? model('Developer', DeveloperSchema)
+DeveloperSchema.index({
+  claimed: 1,
+  claimedAt: -1,
+})
+
+
+export type Developer = InferSchemaType<typeof DeveloperSchema>
+
+/**
+ * 5. Model export (safe for hot reload / Next.js / Fastify)
+ */
+export const DeveloperModel =
+  models.Developer ?? model('Developer', DeveloperSchema)

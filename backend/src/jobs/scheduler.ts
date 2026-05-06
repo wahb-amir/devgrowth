@@ -2,7 +2,7 @@ import cron from 'node-cron'
 import { jobQueue } from './queue.js'
 import { DeveloperModel } from '../db/models/index.js'
 import { getConfig } from '../lib/config.js'
-import { hasRateLimitHeadroom } from '../lib/github-client.js'
+import { hasRateLimitHeadroom } from '../lib/github-service.js'
 
 export function registerScheduledJobs() {
   const config = getConfig()

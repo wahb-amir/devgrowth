@@ -31,7 +31,11 @@ async function main() {
   }
 
   // Graceful shutdown
-  const shutdown = async (signal) => {
+  enum Signal {
+    SIGINT = 'SIGINT',
+    SIGTERM = 'SIGTERM',
+  }
+  const shutdown = async (signal: Signal) => {
     console.info(`\n${signal} received. Shutting down...`)
     try {
       await server.close()
@@ -44,8 +48,8 @@ async function main() {
     }
   }
 
-  process.on('SIGTERM', () => void shutdown('SIGTERM'))
-  process.on('SIGINT', () => void shutdown('SIGINT'))
+  process.on('SIGTERM', () => void shutdown(Signal.SIGTERM))
+  process.on('SIGINT', () => void shutdown(Signal.SIGINT))
 }
 
 function registerJobHandlers() {
@@ -55,6 +59,7 @@ function registerJobHandlers() {
   jobQueue.register('discover:developer', async (job) => {
     const start = Date.now()
     console.info(`[Job] discover:developer — ${job.payload.username} (stub: Phase 1)`)
+    
     // Phase 1: look up GitHub profile, create DeveloperModel record, enqueue ingest:developer
     return { success: true, durationMs: Date.now() - start }
   })
