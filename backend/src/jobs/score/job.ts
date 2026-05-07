@@ -1,149 +1,58 @@
-// src/jobs/score-dev.job.ts
+// ============================================================
+// score-dev.job.ts — Job adapter (v2)
+//
+// Bridges the existing MongoDB pipeline to the new 7-layer
+// scorer. Minimal changes to the job contract; all scoring
+// logic lives in scorer.ts and layers.ts.
+// ============================================================
 
 import { RawSnapshotModel } from "../../db/models/raw-snapshot.model.js";
 import { ScoredSnapshotModel } from "../../db/models/scored-snapshot.model.js";
 import { DeveloperModel } from "../../db/models/developer.model.js";
-import { jobQueue, JobHandler } from "../queue.js";
+import { jobQueue, type JobHandler } from "../queue.js";
+import { scoreSnapshot, SCORER_VERSION } from "../../scorer/scorer.js";
+import type { RawSnapshot, HistoricalScore } from "../../scorer/types.js";
 
-const clamp = (n: number, min = 0, max = 100) =>
-  Math.max(min, Math.min(max, n));
+// ─────────────────────────────────────────────────────────────
+// Helpers: shape DB documents into scorer input types
+// ─────────────────────────────────────────────────────────────
 
-const SCORER_VERSION = "v1.1.0";
-
-type DevType =
-  | "builder"
-  | "impact_dev"
-  | "maintainer"
-  | "rising_dev"
-  | "balanced"
-  | "watch_area";
-
-type LatestScores = {
-  totalScore: number;
-  devType: DevType;
-  growthScore: number;
-  activityScore: number;
-  impactScore: number;
-  consistencyScore: number;
-  reachScore: number;
-};
-
-/* ---------------- ACTIVITY ---------------- */
-function calcActivity(snapshot: any) {
-  const a = snapshot?.activity_30d || {};
-
-  return clamp(
-    (a.pushes || 0) * 1 +
-      (a.prs || 0) * 2 +
-      (a.issues || 0) * 1.5 +
-      (a.releases || 0) * 5,
-  );
+function toRawSnapshot(doc: any): RawSnapshot {
+  return {
+    takenAt: doc.takenAt ?? new Date(),
+    profile: {
+      followers: doc.profile?.followers ?? 0,
+      public_repos: doc.profile?.public_repos ?? 0,
+    },
+    repoStats: {
+      totalStars: doc.repoStats?.totalStars ?? 0,
+      totalForks: doc.repoStats?.totalForks ?? 0,
+      totalRepos: doc.repoStats?.totalRepos ?? 0,
+    },
+    activity_30d: {
+      pushes: doc.activity_30d?.pushes ?? 0,
+      prs: doc.activity_30d?.prs ?? 0,
+      issues: doc.activity_30d?.issues ?? 0,
+      releases: doc.activity_30d?.releases ?? 0,
+    },
+    // weeklyActivity is optional — scorer handles its absence gracefully
+    weeklyActivity: doc.weeklyActivity ?? [],
+  };
 }
 
-/* ---------------- IMPACT ---------------- */
-function calcImpact(snapshot: any) {
-  const repo = snapshot?.repoStats || {};
-
-  const stars = repo.totalStars || 0;
-  const forks = repo.totalForks || 0;
-  const repos = repo.totalRepos || 0;
-
-  const score =
-    Math.log10(stars + 1) * 35 +
-    Math.log10(forks + 1) * 15 +
-    Math.log10(repos + 1) * 20;
-
-  return clamp(score);
+function toHistoricalScore(doc: any): HistoricalScore {
+  return {
+    takenAt: doc.takenAt ?? doc.createdAt ?? new Date(),
+    totalScore: typeof doc.totalScore === "number" ? doc.totalScore : 0,
+  };
 }
 
-/* ---------------- CONSISTENCY ---------------- */
-function calcConsistency(snapshot: any) {
-  const a = snapshot?.activity_30d || {};
-  const pushes = a.pushes || 0;
-  const prs = a.prs || 0;
-  const issues = a.issues || 0;
-  const releases = a.releases || 0;
-
-  const total = pushes + prs + issues + releases;
-
-  // Simple volume-based consistency.
-  // This is not true “time consistency”, but it works as a first signal.
-  const score = Math.min(100, total * 2);
-
-  return clamp(score);
-}
-
-/* ---------------- REACH ---------------- */
-function calcReach(snapshot: any) {
-  const profile = snapshot?.profile || {};
-
-  const followers = profile.followers || 0;
-  const repos = profile.public_repos || 0;
-
-  return clamp(Math.log10(followers + 1) * 40 + Math.log10(repos + 1) * 20);
-}
-
-/* ---------------- DEV TYPE ---------------- */
-function classifyDev(args: {
-  activity: number;
-  impact: number;
-  consistency: number;
-  reach: number;
-  growthScore: number;
-}) {
-  const { activity, impact, consistency, reach, growthScore } = args;
-
-  const highActivity = activity >= 70;
-  const highImpact = impact >= 65;
-  const strongConsistency = consistency >= 70;
-  const decentReach = reach >= 50;
-  const positiveMomentum = growthScore >= 5;
-
-  if (highActivity && impact < 55) {
-    return "builder";
-  }
-
-  if (highImpact && activity < 55) {
-    return "impact_dev";
-  }
-
-  if (strongConsistency && highActivity && impact >= 45) {
-    return "maintainer";
-  }
-
-  if (positiveMomentum && (activity >= 55 || impact >= 55 || reach >= 55)) {
-    return "rising_dev";
-  }
-
-  if (activity < 45 && impact < 45 && consistency < 45 && reach < 45) {
-    return "watch_area";
-  }
-
-  if (decentReach && (activity >= 50 || impact >= 50)) {
-    return "balanced";
-  }
-
-  return "balanced";
-}
-
-/* ---------------- GROWTH ---------------- */
-async function calcGrowth(developerId: string, currentScore: number) {
-  const prev = await ScoredSnapshotModel.findOne({ developerId })
-    .sort({ takenAt: -1 })
-    .skip(1)
-    .lean();
-
-  if (!prev) return 0;
-
-  const prevScore = typeof prev.totalScore === "number" ? prev.totalScore : 0;
-  return currentScore - prevScore;
-}
-
-/* ---------------- JOB ---------------- */
+// ─────────────────────────────────────────────────────────────
+// Job handler
+// ─────────────────────────────────────────────────────────────
 export const scoreDev: JobHandler = async (job) => {
   const start = Date.now();
-
-  const { username } = job.payload || {};
+  const { username } = job.payload ?? {};
 
   if (!username || typeof username !== "string") {
     throw new Error("username_required");
@@ -151,108 +60,99 @@ export const scoreDev: JobHandler = async (job) => {
 
   const normalized = username.trim().toLowerCase();
 
-  const developer = await DeveloperModel.findOne({
-    username: normalized,
-  }).lean();
-
+  // ── 1. Resolve developer ──────────────────────────────────
+  const developer = await DeveloperModel.findOne({ username: normalized }).lean();
   if (!developer?._id) throw new Error("developer_not_found");
 
-  const snapshot = await RawSnapshotModel.findOne({
+  // ── 2. Latest raw snapshot ────────────────────────────────
+  const rawDoc = await RawSnapshotModel.findOne({ developerId: developer._id })
+    .sort({ takenAt: -1 })
+    .lean();
+  if (!rawDoc) throw new Error("snapshot_not_found");
+
+  // ── 3. Historical scored snapshots (for L6 + L7) ─────────
+  const historyDocs = await ScoredSnapshotModel.find({
     developerId: developer._id,
   })
     .sort({ takenAt: -1 })
+    .limit(20) // last 20 is sufficient for EMA / slope
     .lean();
 
-  if (!snapshot) throw new Error("snapshot_not_found");
+  // ── 4. Run 7-layer scorer ─────────────────────────────────
+  const snapshot = toRawSnapshot(rawDoc);
+  const history: HistoricalScore[] = historyDocs.map(toHistoricalScore);
 
-  /* ---------------- SCORES ---------------- */
-  const activityScore = calcActivity(snapshot);
-  const impactScore = calcImpact(snapshot);
-  const consistencyScore = calcConsistency(snapshot);
-  const reachScore = calcReach(snapshot);
+  // Cohort injection: pass an empty array for now.
+  // Replace with a real cohort query (e.g. from a Redis cache
+  // or a pre-computed collection) once the data pipeline is ready.
+  const cohort: { totalScore: number; repoCount: number }[] = [];
 
-  const baseScore =
-    activityScore * 0.4 +
-    impactScore * 0.35 +
-    consistencyScore * 0.15 +
-    reachScore * 0.1;
-
-  const previousScoredSnapshot = await ScoredSnapshotModel.findOne({
-    developerId: developer._id,
-  })
-    .sort({ takenAt: -1 })
-    .skip(1)
-    .lean();
-
-  const growthScore = await calcGrowth(String(developer._id), baseScore);
-  const finalScore = clamp(baseScore + growthScore * 0.3);
-
-  const devType = classifyDev({
-    activity: activityScore,
-    impact: impactScore,
-    consistency: consistencyScore,
-    reach: reachScore,
-    growthScore,
+  const result = scoreSnapshot(snapshot, {
+    cohort,
+    history,
+    decayHalfLifeDays: 10,
   });
 
-  /* ---------------- SAVE SCORED SNAPSHOT ---------------- */
+  // ── 5. Persist scored snapshot ────────────────────────────
+  const previousSnapshotId = historyDocs[0]?._id;
+
   const savedSnapshot = await ScoredSnapshotModel.create({
     developerId: developer._id,
-    rawSnapshotId: snapshot._id,
+    rawSnapshotId: rawDoc._id,
     takenAt: new Date(),
     scorerVersion: SCORER_VERSION,
 
-    totalScore: finalScore,
-    percentileRank: null,
-    growthScore,
-    devType,
+    totalScore: result.finalScore,
+    percentileRank: result.percentileRank,
+    devType: result.archetype,
+    growthScore: result.growthScore,
 
     normalizedProfile: {
-      followers: snapshot.profile?.followers || 0,
-      repos: snapshot.profile?.public_repos || 0,
-      stars: snapshot.repoStats?.totalStars || 0,
-      forks: snapshot.repoStats?.totalForks || 0,
+      followers: snapshot.profile.followers,
+      repos: snapshot.profile.public_repos,
+      stars: snapshot.repoStats.totalStars,
+      forks: snapshot.repoStats.totalForks,
       activity_30d: snapshot.activity_30d,
     },
 
     subScores: {
       activity: {
-        score: activityScore,
-        weight: 0.4,
-        weightedScore: activityScore * 0.4,
+        score: result.layers.l5.compositeScore, // surfaced from L5
+        weight: result.layers.l5.weights.activity,
+        weightedScore:
+          result.layers.l5.compositeScore * result.layers.l5.weights.activity,
         signals: [],
-        tags: ["activity"],
+        tags: ["activity", result.archetype],
       },
       impact: {
-        score: impactScore,
-        weight: 0.35,
-        weightedScore: impactScore * 0.35,
+        score: result.layers.l1.stars * 100,
+        weight: result.layers.l5.weights.impact,
+        weightedScore: result.layers.l1.stars * 100 * result.layers.l5.weights.impact,
         signals: [],
         tags: ["impact"],
       },
       consistency: {
-        score: consistencyScore,
-        weight: 0.15,
-        weightedScore: consistencyScore * 0.15,
+        score: result.layers.l2.consistencyVariance * 100,
+        weight: result.layers.l5.weights.consistency,
+        weightedScore:
+          result.layers.l2.consistencyVariance *
+          100 *
+          result.layers.l5.weights.consistency,
         signals: [],
         tags: ["consistency"],
       },
       reach: {
-        score: reachScore,
-        weight: 0.1,
-        weightedScore: reachScore * 0.1,
+        score: result.layers.l1.followers * 100,
+        weight: result.layers.l5.weights.reach,
+        weightedScore:
+          result.layers.l1.followers * 100 * result.layers.l5.weights.reach,
         signals: [],
         tags: ["reach"],
       },
     },
   });
 
-  /* ---------------- UPDATE DEVELOPER ----------------
-     IMPORTANT:
-     Your current Developer schema does NOT have a `scoring` field.
-     So writing to `scoring.latestScore` will be ignored/stripped unless you add that field to the schema.
-     For now, update only real fields.
-  */
+  // ── 6. Update developer document ──────────────────────────
   await DeveloperModel.updateOne(
     { _id: developer._id },
     {
@@ -260,33 +160,23 @@ export const scoreDev: JobHandler = async (job) => {
         lastFetchedAt: new Date(),
         ingestionStatus: "completed",
       },
-    },
+    }
   );
 
-  /* ---------------- ENQUEUE INSIGHTS ---------------- */
+  // ── 7. Enqueue downstream insight generation ──────────────
   jobQueue.enqueue(
     {
       name: "generate:insights",
       payload: {
         developerId: String(developer._id),
         scoredSnapshotId: String(savedSnapshot._id),
-        previousScoredSnapshotId: previousScoredSnapshot?._id
-          ? String(previousScoredSnapshot._id)
+        previousScoredSnapshotId: previousSnapshotId
+          ? String(previousSnapshotId)
           : undefined,
       },
     },
-    1,
+    1
   );
-
-  const latestScores: LatestScores = {
-    totalScore: finalScore,
-    devType,
-    growthScore,
-    activityScore,
-    impactScore,
-    consistencyScore,
-    reachScore,
-  };
 
   return {
     success: true,
@@ -295,7 +185,18 @@ export const scoreDev: JobHandler = async (job) => {
     metadata: {
       developerId: String(developer._id),
       scoredSnapshotId: String(savedSnapshot._id),
-      latestScores,
+      scorerVersion: SCORER_VERSION,
+      archetype: result.archetype,
+      momentum: result.momentum,
+      confidence: result.confidence,
+      warnings: result.meta.warnings,
+      latestScores: {
+        totalScore: result.finalScore,
+        rawCompositeScore: result.rawCompositeScore,
+        devType: result.archetype,
+        growthScore: result.growthScore,
+        percentileRank: result.percentileRank,
+      },
     },
   };
 };
