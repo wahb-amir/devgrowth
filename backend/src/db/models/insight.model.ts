@@ -98,8 +98,10 @@ const InsightSchema = new Schema(
  * Indexes
  */
 InsightSchema.index({ developerId: 1, generatedAt: -1 })
-InsightSchema.index({ scoredSnapshotId: 1 })
-
+InsightSchema.index(
+  { developerId: 1, scoredSnapshotId: 1, category: 1 },
+  { unique: true }
+);
 
 export type Insight = InferSchemaType<typeof InsightSchema>
 
@@ -108,3 +110,5 @@ export type Insight = InferSchemaType<typeof InsightSchema>
  */
 export const InsightModel =
   models.Insight ?? model<Insight>('Insight', InsightSchema)
+
+

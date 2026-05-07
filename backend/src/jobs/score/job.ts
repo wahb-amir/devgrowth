@@ -1,7 +1,7 @@
 import { RawSnapshotModel } from "../../db/models/raw-snapshot.model.js";
 import { ScoredSnapshotModel } from "../../db/models/scored-snapshot.model.js";
 import { DeveloperModel } from "../../db/models/developer.model.js";
-import { JobHandler } from "../queue.js";
+import { jobQueue, JobHandler } from "../queue.js";
 
 const clamp = (n: number, min = 0, max = 100) =>
   Math.max(min, Math.min(max, n));
@@ -37,7 +37,6 @@ function calcConsistency(snapshot: any) {
   const a = snapshot?.activity_30d || {};
   const total = (a.pushes || 0) + (a.prs || 0) + (a.issues || 0);
 
-  // simple density-based consistency
   const score = Math.min(100, total * 2);
 
   return clamp(score);
@@ -77,6 +76,7 @@ async function calcGrowth(developerId: string, currentScore: number) {
 /* ---------------- JOB ---------------- */
 export const scoreDev: JobHandler = async (job) => {
   const start = Date.now();
+
   const { username } = job.payload || {};
 
   if (!username || typeof username !== "string") {
@@ -88,6 +88,7 @@ export const scoreDev: JobHandler = async (job) => {
   const developer = await DeveloperModel.findOne({
     username: normalized,
   }).lean();
+
   if (!developer?._id) throw new Error("developer_not_found");
 
   const snapshot = await RawSnapshotModel.findOne({
@@ -111,13 +112,12 @@ export const scoreDev: JobHandler = async (job) => {
     reachScore * 0.1;
 
   const growthScore = await calcGrowth(String(developer._id), baseScore);
-
   const finalScore = clamp(baseScore + growthScore * 0.3);
 
   const devType = classifyDev(activityScore, impactScore, consistencyScore);
 
-  /* ---------------- SAVE ---------------- */
-  await ScoredSnapshotModel.create({
+  /* ---------------- SAVE SCORED SNAPSHOT ---------------- */
+  const savedSnapshot = await ScoredSnapshotModel.create({
     developerId: developer._id,
     rawSnapshotId: snapshot._id,
     takenAt: new Date(),
@@ -168,6 +168,7 @@ export const scoreDev: JobHandler = async (job) => {
     },
   });
 
+  /* ---------------- UPDATE DEVELOPER ---------------- */
   await DeveloperModel.updateOne(
     { _id: developer._id },
     {
@@ -177,6 +178,17 @@ export const scoreDev: JobHandler = async (job) => {
         "scoring.updatedAt": new Date(),
       },
     },
+  );
+
+  jobQueue.enqueue(
+    {
+      name: "generate:insights",
+      payload: {
+        developerId: String(developer._id),
+        scoredSnapshotId: String(savedSnapshot._id),
+      },
+    },
+    1,
   );
 
   return {
