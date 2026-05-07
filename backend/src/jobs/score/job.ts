@@ -1,3 +1,5 @@
+// src/jobs/score-dev.job.ts
+
 import { RawSnapshotModel } from "../../db/models/raw-snapshot.model.js";
 import { ScoredSnapshotModel } from "../../db/models/scored-snapshot.model.js";
 import { DeveloperModel } from "../../db/models/developer.model.js";
@@ -6,7 +8,25 @@ import { jobQueue, JobHandler } from "../queue.js";
 const clamp = (n: number, min = 0, max = 100) =>
   Math.max(min, Math.min(max, n));
 
-const SCORER_VERSION = "v1.0.0";
+const SCORER_VERSION = "v1.1.0";
+
+type DevType =
+  | "builder"
+  | "impact_dev"
+  | "maintainer"
+  | "rising_dev"
+  | "balanced"
+  | "watch_area";
+
+type LatestScores = {
+  totalScore: number;
+  devType: DevType;
+  growthScore: number;
+  activityScore: number;
+  impactScore: number;
+  consistencyScore: number;
+  reachScore: number;
+};
 
 /* ---------------- ACTIVITY ---------------- */
 function calcActivity(snapshot: any) {
@@ -25,9 +45,13 @@ function calcImpact(snapshot: any) {
   const repo = snapshot?.repoStats || {};
 
   const stars = repo.totalStars || 0;
+  const forks = repo.totalForks || 0;
   const repos = repo.totalRepos || 0;
 
-  const score = Math.log10(stars + 1) * 45 + Math.log10(repos + 1) * 20;
+  const score =
+    Math.log10(stars + 1) * 35 +
+    Math.log10(forks + 1) * 15 +
+    Math.log10(repos + 1) * 20;
 
   return clamp(score);
 }
@@ -35,8 +59,15 @@ function calcImpact(snapshot: any) {
 /* ---------------- CONSISTENCY ---------------- */
 function calcConsistency(snapshot: any) {
   const a = snapshot?.activity_30d || {};
-  const total = (a.pushes || 0) + (a.prs || 0) + (a.issues || 0);
+  const pushes = a.pushes || 0;
+  const prs = a.prs || 0;
+  const issues = a.issues || 0;
+  const releases = a.releases || 0;
 
+  const total = pushes + prs + issues + releases;
+
+  // Simple volume-based consistency.
+  // This is not true “time consistency”, but it works as a first signal.
   const score = Math.min(100, total * 2);
 
   return clamp(score);
@@ -53,11 +84,45 @@ function calcReach(snapshot: any) {
 }
 
 /* ---------------- DEV TYPE ---------------- */
-function classifyDev(a: number, i: number, c: number) {
-  if (a > 70 && i > 50) return "builder";
-  if (i > 70 && a < 40) return "explorer";
-  if (c > 70) return "consistent";
-  if (a > 60) return "rising";
+function classifyDev(args: {
+  activity: number;
+  impact: number;
+  consistency: number;
+  reach: number;
+  growthScore: number;
+}) {
+  const { activity, impact, consistency, reach, growthScore } = args;
+
+  const highActivity = activity >= 70;
+  const highImpact = impact >= 65;
+  const strongConsistency = consistency >= 70;
+  const decentReach = reach >= 50;
+  const positiveMomentum = growthScore >= 5;
+
+  if (highActivity && impact < 55) {
+    return "builder";
+  }
+
+  if (highImpact && activity < 55) {
+    return "impact_dev";
+  }
+
+  if (strongConsistency && highActivity && impact >= 45) {
+    return "maintainer";
+  }
+
+  if (positiveMomentum && (activity >= 55 || impact >= 55 || reach >= 55)) {
+    return "rising_dev";
+  }
+
+  if (activity < 45 && impact < 45 && consistency < 45 && reach < 45) {
+    return "watch_area";
+  }
+
+  if (decentReach && (activity >= 50 || impact >= 50)) {
+    return "balanced";
+  }
+
   return "balanced";
 }
 
@@ -68,9 +133,10 @@ async function calcGrowth(developerId: string, currentScore: number) {
     .skip(1)
     .lean();
 
-  if (!prev?.totalScore) return 0;
+  if (!prev) return 0;
 
-  return currentScore - prev.totalScore;
+  const prevScore = typeof prev.totalScore === "number" ? prev.totalScore : 0;
+  return currentScore - prevScore;
 }
 
 /* ---------------- JOB ---------------- */
@@ -111,10 +177,23 @@ export const scoreDev: JobHandler = async (job) => {
     consistencyScore * 0.15 +
     reachScore * 0.1;
 
+  const previousScoredSnapshot = await ScoredSnapshotModel.findOne({
+    developerId: developer._id,
+  })
+    .sort({ takenAt: -1 })
+    .skip(1)
+    .lean();
+
   const growthScore = await calcGrowth(String(developer._id), baseScore);
   const finalScore = clamp(baseScore + growthScore * 0.3);
 
-  const devType = classifyDev(activityScore, impactScore, consistencyScore);
+  const devType = classifyDev({
+    activity: activityScore,
+    impact: impactScore,
+    consistency: consistencyScore,
+    reach: reachScore,
+    growthScore,
+  });
 
   /* ---------------- SAVE SCORED SNAPSHOT ---------------- */
   const savedSnapshot = await ScoredSnapshotModel.create({
@@ -168,34 +247,55 @@ export const scoreDev: JobHandler = async (job) => {
     },
   });
 
-  /* ---------------- UPDATE DEVELOPER ---------------- */
+  /* ---------------- UPDATE DEVELOPER ----------------
+     IMPORTANT:
+     Your current Developer schema does NOT have a `scoring` field.
+     So writing to `scoring.latestScore` will be ignored/stripped unless you add that field to the schema.
+     For now, update only real fields.
+  */
   await DeveloperModel.updateOne(
     { _id: developer._id },
     {
       $set: {
-        "scoring.latestScore": finalScore,
-        "scoring.devType": devType,
-        "scoring.updatedAt": new Date(),
+        lastFetchedAt: new Date(),
+        ingestionStatus: "completed",
       },
     },
   );
 
+  /* ---------------- ENQUEUE INSIGHTS ---------------- */
   jobQueue.enqueue(
     {
       name: "generate:insights",
       payload: {
         developerId: String(developer._id),
         scoredSnapshotId: String(savedSnapshot._id),
+        previousScoredSnapshotId: previousScoredSnapshot?._id
+          ? String(previousScoredSnapshot._id)
+          : undefined,
       },
     },
     1,
   );
 
+  const latestScores: LatestScores = {
+    totalScore: finalScore,
+    devType,
+    growthScore,
+    activityScore,
+    impactScore,
+    consistencyScore,
+    reachScore,
+  };
+
   return {
     success: true,
     username: normalized,
-    finalScore,
-    devType,
     durationMs: Date.now() - start,
+    metadata: {
+      developerId: String(developer._id),
+      scoredSnapshotId: String(savedSnapshot._id),
+      latestScores,
+    },
   };
 };
