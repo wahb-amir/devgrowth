@@ -1,56 +1,36 @@
-// ============================================================
-// score-dev.job.ts — Job adapter (v2)
-//
-// Bridges the existing MongoDB pipeline to the new 7-layer
-// scorer. Minimal changes to the job contract; all scoring
-// logic lives in scorer.ts and layers.ts.
-// ============================================================
+// =============================================================
+// score-dev-v3.job.ts — DB adapter for the V3 scorer
+// Drop-in replacement for score-dev.job.ts
+// =============================================================
 
-import { RawSnapshotModel } from "../../db/models/raw-snapshot.model.js";
+import { RawSnapshotModel }    from "../../db/models/raw-snapshot.model.js";
 import { ScoredSnapshotModel } from "../../db/models/scored-snapshot.model.js";
-import { DeveloperModel } from "../../db/models/developer.model.js";
+import { DeveloperModel }      from "../../db/models/developer.model.js";
 import { jobQueue, type JobHandler } from "../queue.js";
-import { scoreSnapshot, SCORER_VERSION } from "../../scorer/scorer.js";
-import type { RawSnapshot, HistoricalScore } from "../../scorer/types.js";
+import { scoreV3, SCORER_VERSION }   from "../../scorer/scorer.js";
+import type { NormalizedProfile, HistoricalEntry } from "../../scorer/types.js";
 
-// ─────────────────────────────────────────────────────────────
-// Helpers: shape DB documents into scorer input types
-// ─────────────────────────────────────────────────────────────
+// ── Shape DB documents into V3 input types ────────────────────
 
-function toRawSnapshot(doc: any): RawSnapshot {
+function toNormalizedProfile(rawDoc: any): NormalizedProfile {
   return {
-    takenAt: doc.takenAt ?? new Date(),
-    profile: {
-      followers: doc.profile?.followers ?? 0,
-      public_repos: doc.profile?.public_repos ?? 0,
-    },
-    repoStats: {
-      totalStars: doc.repoStats?.totalStars ?? 0,
-      totalForks: doc.repoStats?.totalForks ?? 0,
-      totalRepos: doc.repoStats?.totalRepos ?? 0,
-    },
+    followers:    rawDoc.profile?.followers     ?? 0,
+    repos:        rawDoc.profile?.public_repos  ?? 0,
+    stars:        rawDoc.repoStats?.totalStars  ?? 0,
+    forks:        rawDoc.repoStats?.totalForks  ?? 0,
     activity_30d: {
-      pushes: doc.activity_30d?.pushes ?? 0,
-      prs: doc.activity_30d?.prs ?? 0,
-      issues: doc.activity_30d?.issues ?? 0,
-      releases: doc.activity_30d?.releases ?? 0,
+      pushes:   rawDoc.activity_30d?.pushes   ?? 0,
+      prs:      rawDoc.activity_30d?.prs      ?? 0,
+      issues:   rawDoc.activity_30d?.issues   ?? 0,
+      releases: rawDoc.activity_30d?.releases ?? 0,
     },
-    // weeklyActivity is optional — scorer handles its absence gracefully
-    weeklyActivity: doc.weeklyActivity ?? [],
+    weeklyActivity: rawDoc.weeklyActivity ?? [],
   };
 }
 
-function toHistoricalScore(doc: any): HistoricalScore {
-  return {
-    takenAt: doc.takenAt ?? doc.createdAt ?? new Date(),
-    totalScore: typeof doc.totalScore === "number" ? doc.totalScore : 0,
-  };
-}
+// ── Job handler ───────────────────────────────────────────────
 
-// ─────────────────────────────────────────────────────────────
-// Job handler
-// ─────────────────────────────────────────────────────────────
-export const scoreDev: JobHandler = async (job) => {
+export const scoreDevV3: JobHandler = async (job) => {
   const start = Date.now();
   const { username } = job.payload ?? {};
 
@@ -60,116 +40,109 @@ export const scoreDev: JobHandler = async (job) => {
 
   const normalized = username.trim().toLowerCase();
 
-  // ── 1. Resolve developer ──────────────────────────────────
-  const developer = await DeveloperModel.findOne({ username: normalized }).lean();
+  // 1. Resolve developer
+  const developer = await DeveloperModel.findOne({
+    username: normalized,
+  }).lean();
   if (!developer?._id) throw new Error("developer_not_found");
 
-  // ── 2. Latest raw snapshot ────────────────────────────────
-  const rawDoc = await RawSnapshotModel.findOne({ developerId: developer._id })
+  // 2. Latest raw snapshot
+  const rawDoc = await RawSnapshotModel.findOne({
+    developerId: developer._id,
+  })
     .sort({ takenAt: -1 })
     .lean();
   if (!rawDoc) throw new Error("snapshot_not_found");
 
-  // ── 3. Historical scored snapshots (for L6 + L7) ─────────
+  // 3. Historical scored snapshots for trend + confidence
   const historyDocs = await ScoredSnapshotModel.find({
     developerId: developer._id,
+    scorerVersion: SCORER_VERSION, // only compare within V3 scores
   })
-    .sort({ takenAt: -1 })
-    .limit(20) // last 20 is sufficient for EMA / slope
+    .sort({ takenAt: 1 }) // oldest first for EMA calculation
+    .limit(20)
     .lean();
 
-  // ── 4. Run 7-layer scorer ─────────────────────────────────
-  const snapshot = toRawSnapshot(rawDoc);
-  const history: HistoricalScore[] = historyDocs.map(toHistoricalScore);
+  const history: HistoricalEntry[] = historyDocs.map((d) => ({
+    takenAt:    d.takenAt ?? d.createdAt ?? new Date(),
+    totalScore: typeof d.totalScore === "number" ? d.totalScore : 0,
+  }));
 
-  // Cohort injection: pass an empty array for now.
-  // Replace with a real cohort query (e.g. from a Redis cache
-  // or a pre-computed collection) once the data pipeline is ready.
-  const cohort: { totalScore: number; repoCount: number }[] = [];
-
-  const result = scoreSnapshot(snapshot, {
-    cohort,
+  // 4. Score
+  const profile = toNormalizedProfile(rawDoc);
+  const result  = scoreV3({
+    profile,
     history,
-    decayHalfLifeDays: 10,
+    snapshotCount: historyDocs.length + 1,
   });
 
-  // ── 5. Persist scored snapshot ────────────────────────────
-  const previousSnapshotId = historyDocs[0]?._id;
+  // 5. Persist
+  const previousSnapshotId = historyDocs.at(-1)?._id;
 
-  const savedSnapshot = await ScoredSnapshotModel.create({
-    developerId: developer._id,
+  const saved = await ScoredSnapshotModel.create({
+    developerId:   developer._id,
     rawSnapshotId: rawDoc._id,
-    takenAt: new Date(),
+    takenAt:       new Date(),
     scorerVersion: SCORER_VERSION,
 
-    totalScore: result.finalScore,
-    percentileRank: result.percentileRank,
-    devType: result.archetype,
-    growthScore: result.growthScore,
+    totalScore:    result.finalScore,
+    percentileRank: null, // populated by a separate percentile job
+    devType:       result.archetype,
+    growthScore:   result.trend,
 
     normalizedProfile: {
-      followers: snapshot.profile.followers,
-      repos: snapshot.profile.public_repos,
-      stars: snapshot.repoStats.totalStars,
-      forks: snapshot.repoStats.totalForks,
-      activity_30d: snapshot.activity_30d,
+      followers:   profile.followers,
+      repos:       profile.repos,
+      stars:       profile.stars,
+      forks:       profile.forks,
+      activity_30d: profile.activity_30d,
     },
 
     subScores: {
       activity: {
-        score: result.layers.l5.compositeScore, // surfaced from L5
-        weight: result.layers.l5.weights.activity,
-        weightedScore:
-          result.layers.l5.compositeScore * result.layers.l5.weights.activity,
-        signals: [],
-        tags: ["activity", result.archetype],
+        score:         result.subScores.activity,
+        weight:        0.30,
+        weightedScore: result.subScores.activity * 0.30,
+        signals:       [],
+        tags:          ["activity", result.archetype],
       },
       impact: {
-        score: result.layers.l1.stars * 100,
-        weight: result.layers.l5.weights.impact,
-        weightedScore: result.layers.l1.stars * 100 * result.layers.l5.weights.impact,
-        signals: [],
-        tags: ["impact"],
+        score:         result.subScores.impact,
+        weight:        0.35,
+        weightedScore: result.subScores.impact * 0.35,
+        signals:       [],
+        tags:          ["impact"],
       },
       consistency: {
-        score: result.layers.l2.consistencyVariance * 100,
-        weight: result.layers.l5.weights.consistency,
-        weightedScore:
-          result.layers.l2.consistencyVariance *
-          100 *
-          result.layers.l5.weights.consistency,
-        signals: [],
-        tags: ["consistency"],
+        score:         result.subScores.consistency,
+        weight:        0.20,
+        weightedScore: result.subScores.consistency * 0.20,
+        signals:       [],
+        tags:          ["consistency"],
       },
       reach: {
-        score: result.layers.l1.followers * 100,
-        weight: result.layers.l5.weights.reach,
-        weightedScore:
-          result.layers.l1.followers * 100 * result.layers.l5.weights.reach,
-        signals: [],
-        tags: ["reach"],
+        score:         result.subScores.reach,
+        weight:        0.15,
+        weightedScore: result.subScores.reach * 0.15,
+        signals:       [],
+        tags:          ["reach"],
       },
     },
   });
 
-  // ── 6. Update developer document ──────────────────────────
+  // 6. Update developer record
   await DeveloperModel.updateOne(
     { _id: developer._id },
-    {
-      $set: {
-        lastFetchedAt: new Date(),
-        ingestionStatus: "completed",
-      },
-    }
+    { $set: { lastFetchedAt: new Date(), ingestionStatus: "completed" } }
   );
 
-  // ── 7. Enqueue downstream insight generation ──────────────
+  // 7. Enqueue insight generation
   jobQueue.enqueue(
     {
       name: "generate:insights",
       payload: {
-        developerId: String(developer._id),
-        scoredSnapshotId: String(savedSnapshot._id),
+        developerId:             String(developer._id),
+        scoredSnapshotId:        String(saved._id),
         previousScoredSnapshotId: previousSnapshotId
           ? String(previousSnapshotId)
           : undefined,
@@ -179,23 +152,23 @@ export const scoreDev: JobHandler = async (job) => {
   );
 
   return {
-    success: true,
-    username: normalized,
+    success:   true,
+    username:  normalized,
     durationMs: Date.now() - start,
     metadata: {
-      developerId: String(developer._id),
-      scoredSnapshotId: String(savedSnapshot._id),
-      scorerVersion: SCORER_VERSION,
-      archetype: result.archetype,
-      momentum: result.momentum,
-      confidence: result.confidence,
-      warnings: result.meta.warnings,
-      latestScores: {
-        totalScore: result.finalScore,
-        rawCompositeScore: result.rawCompositeScore,
-        devType: result.archetype,
-        growthScore: result.growthScore,
-        percentileRank: result.percentileRank,
+      developerId:      String(developer._id),
+      scoredSnapshotId: String(saved._id),
+      scorerVersion:    SCORER_VERSION,
+      archetype:        result.archetype,
+      confidence:       result.confidence,
+      trendLabel:       result.trendLabel,
+      warnings:         result.meta.warnings,
+      scores: {
+        final:       result.finalScore,
+        activity:    result.subScores.activity,
+        impact:      result.subScores.impact,
+        consistency: result.subScores.consistency,
+        reach:       result.subScores.reach,
       },
     },
   };

@@ -1,418 +1,366 @@
-// ============================================================
-// layers.ts — The 7 scoring layers, each a pure function
-// ============================================================
+// =============================================================
+// layers.ts — The 4-Layer V3 Scoring Architecture
+// =============================================================
 
-import {
-  sigmoid,
-  decayWeight,
-  mean,
-  stdDev,
-  ema,
-  lsSlope,
-  clamp,
-  percentileRankIn,
-} from "./math.js";
-
+import { sig, clamp, decay, cov, mean, stdDev, shapeDistribution } from "./math.js";
 import type {
-  RawSnapshot,
-  HistoricalScore,
-  WeeklyActivity,
-  Layer1Output,
-  Layer2Output,
-  Layer3Output,
-  Layer4Output,
-  Layer5Output,
-  Layer6Output,
-  Layer7Output,
-  DevArchetype,
-} from "../jobs/score/types.js";
+  NormalizedProfile,
+  WeeklySlice,
+  L1Signals,
+  L2Features,
+  L3Decayed,
+  L4Result,
+  Archetype,
+  HistoricalEntry,
+} from "./types.js";
 
-// ─── Tiny epsilon to prevent divide-by-zero ───────────────────
-const ε = 1e-6;
+// ─── Constants ────────────────────────────────────────────────
+
+/** Sigmoid anchor constants (k values). See math.ts:sig for derivation. */
+const K = {
+  pushes:    60,  // ~60 pushes/month  = active mid-tier
+  prs:       25,  // ~25 PRs/month     = solid contributor
+  issues:    20,  // ~20 issues/month  = engaged
+  releases:   5,  // ~5 releases/month = ships product
+  // Impact anchors are set LOW intentionally:
+  // sig(0, k) ≈ 0.018 collapses at zero — anchoring at the
+  // median of real GitHub repos (not top-1%) prevents collapse
+  // for active devs with modest-but-real projects.
+  stars:      5,  // ~5 stars   = has at least some traction (median real-world)
+  repos:     15,  // ~15 repos  = established portfolio (halved — most devs have 5–20)
+  forks:      3,  // ~3 forks   = others build on work (realistic median)
+  followers:  20, // ~20 followers = small but real audience
+} as const;
+
+/** Decay half-life in days. e^(-30/10) ≈ 0.05 so 30-day-old = 5% weight. */
+const DECAY_HALF_LIFE = 10;
+
+/** Anti-exploit thresholds */
+const SPAM_PUSH_TO_PR_THRESHOLD = 15; // pushes:PRs ratio above this = spam flag
+const BURST_RATIO_THRESHOLD = 3.0;    // peak week > 3× average = burst flag    // peak week > 4× average = burst flag
 
 // ─────────────────────────────────────────────────────────────
-// LAYER 1 — Sigmoid Normalisation
+// LAYER 1 — Raw Signal Extraction
 //
-// Maps raw counts → (0, 1) with signal-specific calibration.
-// Calibration table:
-//   mu  = "typical mid-tier" value (maps to 0.5)
-//   k   = steepness (higher → sharper step)
-//
-// Anti-gaming note:
-//   Pushes use a LOW k (0.12) so spamming 500 pushes
-//   yields a barely higher score than 60 pushes.
-//   PRs use higher k because each PR requires meaningful effort.
+// Reads the normalizedProfile and returns raw numbers.
+// No transformation here — pure passthrough for auditability.
 // ─────────────────────────────────────────────────────────────
-export function computeLayer1(snapshot: RawSnapshot): Layer1Output {
-  const a = snapshot.activity_30d;
-  const repo = snapshot.repoStats;
-  const profile = snapshot.profile;
 
+export function layer1(profile: NormalizedProfile): L1Signals {
+  const a = profile.activity_30d;
   return {
-    // Activity signals — aggressive compression on pushes to deter spam
-    pushes: sigmoid(a.pushes, 0.12, 20),
-    prs: sigmoid(a.prs, 0.30, 8),
-    issues: sigmoid(a.issues, 0.20, 10),
-    releases: sigmoid(a.releases, 0.70, 3),
-
-    // Impact signals — log-scale inputs fed into sigmoid
-    stars: sigmoid(Math.log10(repo.totalStars + 1), 1.8, 2.5),
-    forks: sigmoid(Math.log10(repo.totalForks + 1), 2.2, 1.8),
-
-    // Reach signals
-    followers: sigmoid(Math.log10(profile.followers + 1), 1.5, 2.0),
-    repos: sigmoid(Math.log10(profile.public_repos + 1), 2.0, 1.5),
+    pushes:    a.pushes    ?? 0,
+    prs:       a.prs       ?? 0,
+    issues:    a.issues    ?? 0,
+    releases:  a.releases  ?? 0,
+    stars:     profile.stars     ?? 0,
+    repos:     profile.repos     ?? 0,
+    forks:     profile.forks     ?? 0,
+    followers: profile.followers ?? 0,
   };
 }
 
 // ─────────────────────────────────────────────────────────────
-// LAYER 2 — Behavioural Signals
+// LAYER 2 — Bounded Sigmoid Features
 //
-// Derives higher-order signals from Layer 1 values.
+// Converts raw signals → bounded 0–100 sub-scores using the
+// calibrated sig(x/k) formula. Each sub-score has explicit
+// weights that sum to 100.
 //
-// Anti-gaming:
-//   ProductivityRatio: 500 pushes with 0 PRs → ratio → 0 (very bad).
-//   ImpactEfficiency:  many repos with 0 stars → score → 0.
-//   BurstScore:        triggers penalty when activity is
-//                      concentrated in a single spike.
+// Anti-exploit guards applied here before aggregation.
 // ─────────────────────────────────────────────────────────────
-export function computeLayer2(
-  l1: Layer1Output,
-  weekly: WeeklyActivity[] = []
-): Layer2Output {
-  // Productivity Ratio: PR density relative to push volume
-  // High pushes with few PRs → score approaches 0
-  const productivityRatio = clamp(l1.prs / (l1.pushes + ε));
 
-  // Impact Efficiency: star×fork density relative to repo count
-  // Owning 300 repos with 10 total stars → score → 0
-  const impactEfficiency = clamp(
-    (l1.stars * l1.forks) / (l1.repos + ε)
+export function layer2(
+  l1: L1Signals,
+  weeklySlices: WeeklySlice[] = []
+): L2Features {
+  // ── Activity (max=100) ────────────────────────────────────
+  //   pushes×40 + prs×30 + issues×15 + releases×15
+  //   prs are weighted higher than pushes (per-unit value).
+  //   releases are weighted equal to issues (rare but meaningful).
+  const rawActivity = clamp(
+    sig(l1.pushes,   K.pushes)   * 40 +
+    sig(l1.prs,      K.prs)      * 30 +
+    sig(l1.issues,   K.issues)   * 15 +
+    sig(l1.releases, K.releases) * 15
   );
 
-  // Consistency Variance: based on per-week push distribution
-  // Perfect consistency → score = 1; all activity in one day → score → 0
-  let consistencyVariance = 0.5; // neutral default when no weekly data
-  let burstScore = 0;
+  // ── Consistency Variance Penalty ─────────────────────────
+  //   Uses weekly push distribution to detect bursty patterns.
+  //   CoV (stdDev/mean) of weekly pushes:
+  //     = 0   → no penalty (perfectly consistent)
+  //     = 1   → 20-point penalty
+  //     ≥ 2   → 40-point cap penalty (extreme burst)
+  //
+  //   When no weekly data, penalty defaults to 0 (benefit of the doubt).
+  let activityVariancePenalty = 0;
+  let pushToPrRatio = 0;
+  let burstRatio = 0;
+  let spamPenaltyApplied = false;
 
-  if (weekly.length >= 2) {
-    const weeklyPushes = weekly.map((w) => w.pushes);
-    const m = mean(weeklyPushes);
-    const sd = stdDev(weeklyPushes);
+  if (weeklySlices.length >= 2) {
+    const weeklyPushes = weeklySlices.map((w) => w.pushes);
+    const weeklyMean = mean(weeklyPushes);
+    const weeklyCoV = cov(weeklyPushes);
 
-    // CoV-based consistency: 1/(1+CoV) so it never goes negative.
-    // Consistent dev (CoV ≈ 0.05) → ≈ 0.95; bursty (CoV ≈ 47) → ≈ 0.02
-    const coefficientOfVariation = sd / (m + ε);
-    consistencyVariance = clamp(1 / (1 + coefficientOfVariation));
+    // Variance penalty: linear scaling, capped at 40
+    activityVariancePenalty = clamp(weeklyCoV * 20, 0, 40);
 
-    // Burst Score: peak-week z-score /10 so 10σ = 1.0.
-    // Real spammers hit 30–50σ → clamp to 1.0.
-    // Even distribution → z ≈ 0 → burstScore ≈ 0.
-    const maxPush = Math.max(...weeklyPushes);
-    const rawBurst = (maxPush - m) / (sd + ε);
-    burstScore = clamp(rawBurst / 10);
+    // Burst ratio: peak week vs average
+    const peakWeek = Math.max(...weeklyPushes);
+    burstRatio = weeklyMean > 0 ? peakWeek / weeklyMean : 0;
   }
 
-  return { productivityRatio, impactEfficiency, consistencyVariance, burstScore };
+  // ── Anti-Spam: Push-to-PR ratio ───────────────────────────
+  //   High pushes with very few PRs = mechanical commit spam.
+  //   Penalty: reduce activity score by 25% when ratio > threshold.
+  //   Guard: only triggers when prs > 0 (prs=0 handled separately).
+  if (l1.prs > 0) {
+    pushToPrRatio = l1.pushes / l1.prs;
+  } else if (l1.pushes > 20) {
+    // Many pushes, zero PRs = definitive spam signal
+    pushToPrRatio = l1.pushes; // treated as worst-case ratio
+  }
+
+  if (pushToPrRatio > SPAM_PUSH_TO_PR_THRESHOLD) {
+    spamPenaltyApplied = true;
+    activityVariancePenalty = Math.max(activityVariancePenalty, 20); // enforce minimum 20pt penalty
+  }
+
+  const consistency = clamp(rawActivity - activityVariancePenalty);
+
+  // ── Impact (max=100) ─────────────────────────────────────
+  //   stars×60 + repos×25 + forks×15
+  //
+  //   KEY FIX vs V2: sig(x/k) has a floor at sig(0)=0.5.
+  //   stars=2 → sig(2/20) = sig(0.10) → sigmoid(-3.6) ≈ 0.526
+  //   So min impact contribution from stars alone ≈ 0.526×60 = 31.6
+  //   vs V2's sigmoid(log10(3), 1.8, 2.5) ≈ 0.025 × 60 = 1.5
+  //
+  //   This correctly prevents "active users near zero impact" bug.
+  const impact = clamp(
+    sig(l1.stars,  K.stars)  * 60 +
+    sig(l1.repos,  K.repos)  * 25 +
+    sig(l1.forks,  K.forks)  * 15
+  );
+
+  // ── Reach (max=100) ──────────────────────────────────────
+  //   followers×60 + repos×40
+  //   Repos contribute to reach (discoverability) as well as impact.
+  const reach = clamp(
+    sig(l1.followers, K.followers) * 60 +
+    sig(l1.repos,     K.repos)     * 40
+  );
+
+  return {
+    activity: rawActivity,
+    impact,
+    consistency,
+    reach,
+    activityVariancePenalty,
+    pushToPrRatio,
+    burstRatio,
+    spamPenaltyApplied,
+  };
 }
 
 // ─────────────────────────────────────────────────────────────
 // LAYER 3 — Temporal Decay
 //
-// Weights each week's activity by how recent it is.
-// w(t) = e^(-t / halfLife * ln2)
-//   t          = age in days (weekOffset * 7 for weekly data)
-//   halfLifeDays = 10 → activity 10 days ago counts 50%
+// Applies a recency multiplier to L2 sub-scores rather than
+// recomputing from weekly slices. This preserves the signal
+// magnitude established in L2 and applies decay as a scalar.
 //
-// Anti-gaming: a 1-day commit spike followed by 29 days of
-// silence decays to near-zero by scoring time.
+// Design rationale:
+//   Recomputing activity from per-week slices using the same
+//   30-day k-anchors causes collapse: sig(55 pushes, k=60)=0.47,
+//   meaning even an elite week looks "below average". Instead:
+//
+//   1. Compute a recency multiplier from the decay-weighted
+//      ratio of recent-to-total activity mass.
+//   2. Apply that multiplier to L2 scores.
+//
+// Decay rates:
+//   Activity/consistency: fast (halfLife=10d) — momentum signal
+//   Impact/reach:         slow (halfLife=30d) — reputation persists
 // ─────────────────────────────────────────────────────────────
-export function computeLayer3(
-  snapshot: RawSnapshot,
-  halfLifeDays = 10
-): Layer3Output {
-  const weekly = snapshot.weeklyActivity;
 
-  // ── No weekly data: fall back to 30-day aggregate with a
-  //    bulk decay anchored at the midpoint age (15 days).
-  if (!weekly || weekly.length === 0) {
-    const bulkDecay = decayWeight(15, halfLifeDays);
-    const a = snapshot.activity_30d;
+export function layer3(
+  l2: L2Features,
+  weeklySlices: WeeklySlice[] = []
+): L3Decayed {
+  const IMPACT_HALF_LIFE = 30;
+
+  // ── No weekly data: bulk decay for activity only ────────────
+  //
+  // Impact/reach are point-in-time state (stars, repos, followers).
+  // They represent accumulated reputation — not event streams.
+  // A repo that has 500 stars today has 500 stars regardless of
+  // when those stars were earned. Do NOT decay them.
+  //
+  // Activity/consistency are event-based (pushes, PRs happen in time).
+  // Without weekly granularity, apply a mild 0.75 penalty to reflect
+  // that we can't confirm activity is recent.
+  if (weeklySlices.length === 0) {
+    const activityFactor = 0.75;
     return {
-      decayedPushes: a.pushes * bulkDecay,
-      decayedPRs: a.prs * bulkDecay,
-      decayedIssues: a.issues * bulkDecay,
-      decayedReleases: a.releases * bulkDecay,
-      recencyBias: 0.5, // unknown — neutral
+      activity:     l2.activity    * activityFactor,
+      impact:       l2.impact,       // no decay — accumulated state
+      consistency:  l2.consistency  * activityFactor,
+      reach:        l2.reach,        // no decay — accumulated state
+      recencyScore: 0.5,
     };
   }
 
-  // ── Weekly granularity: apply per-week decay ──────────────
-  let wPushes = 0,
-    wPRs = 0,
-    wIssues = 0,
-    wReleases = 0,
-    wTotal = 0;
+  // ── With weekly data: compute recency multiplier ──────────────
+  //
+  // Recency multiplier = decay-weighted activity fraction in last 2 weeks
+  // divided by the total decay-weighted activity.
+  // This gives a value in (0,1] that scales proportionally to how
+  // recently the bulk of the activity occurred.
+  //
+  // A dev with all activity in week 0 → multiplier ≈ 1.0 (max recency)
+  // A dev with all activity in week 3 → multiplier ≈ 0.5 (stale)
 
-  for (const week of weekly) {
-    const ageDays = week.weekOffset * 7;
-    const w = decayWeight(ageDays, halfLifeDays);
+  let totalDecayMass   = 0;
+  let recentDecayMass  = 0;
 
-    wPushes += week.pushes * w;
-    wPRs += week.prs * w;
-    wIssues += week.issues * w;
-    wReleases += week.releases * w;
-    wTotal += w;
+  for (const slice of weeklySlices) {
+    const ageDays     = slice.weekOffset * 7;
+    const w           = decay(ageDays, DECAY_HALF_LIFE);
+    // Weight each week proportionally to its activity volume
+    const weekVolume  = slice.pushes + slice.prs * 2 + slice.issues + slice.releases * 3;
+    totalDecayMass   += w * weekVolume;
+    if (slice.weekOffset <= 1) recentDecayMass += w * weekVolume;
   }
 
-  // Recency bias: proportion of weight-mass in the last 2 weeks
-  const recentWeight = weekly
-    .filter((w) => w.weekOffset <= 2)
-    .reduce((s, w) => s + decayWeight(w.weekOffset * 7, halfLifeDays), 0);
-  const recencyBias = wTotal > 0 ? clamp(recentWeight / wTotal) : 0.5;
+  // If no activity in any week, use a neutral 0.65 multiplier
+  const recencyScore = totalDecayMass > 0
+    ? clamp(recentDecayMass / totalDecayMass, 0, 1)
+    : 0.65;
+
+  // Activity multiplier: blend recency into a [0.5, 1.0] range.
+  // Even fully-stale activity (recency=0) keeps 50% of its L2 value
+  // to avoid punishing developers who had a good month but took a break.
+  const activityMultiplier = 0.5 + recencyScore * 0.5;
+  const impactMultiplier   = decay(15, IMPACT_HALF_LIFE); // fixed ≈ 0.607
 
   return {
-    decayedPushes: wPushes,
-    decayedPRs: wPRs,
-    decayedIssues: wIssues,
-    decayedReleases: wReleases,
-    recencyBias,
+    activity:     l2.activity    * activityMultiplier,
+    impact:       l2.impact,       // no decay — accumulated state
+    consistency:  l2.consistency  * activityMultiplier,
+    reach:        l2.reach,        // no decay — accumulated state
+    recencyScore,
   };
 }
 
 // ─────────────────────────────────────────────────────────────
-// LAYER 4 — Cohort / Percentile Normalisation
+// LAYER 4 — Final Composite + Distribution Shaping
 //
-// Compares a developer's raw composite against a peer cohort.
-// Cohort is selected by repo-size tier to avoid penalising
-// library authors for not having viral projects.
-// ─────────────────────────────────────────────────────────────
-export type CohortPeer = { totalScore: number; repoCount: number };
-
-export function computeLayer4(
-  candidateScore: number,
-  candidateRepoCount: number,
-  cohort: CohortPeer[]
-): Layer4Output {
-  if (cohort.length === 0) {
-    return { percentileRank: null, cohortSize: 0, cohortLabel: "unknown" };
-  }
-
-  // Select peers within ±50% repo count (same "size tier")
-  const lower = candidateRepoCount * 0.5;
-  const upper = candidateRepoCount * 1.5;
-  const peers = cohort.filter(
-    (p) => p.repoCount >= lower && p.repoCount <= upper
-  );
-  const activePeers = peers.length >= 10 ? peers : cohort; // fallback to full cohort
-
-  const peerScores = activePeers.map((p) => p.totalScore);
-  const pct = percentileRankIn(candidateScore, peerScores);
-
-  const label =
-    peers.length >= 10
-      ? `size-matched (n=${peers.length})`
-      : `global (n=${cohort.length})`;
-
-  return {
-    percentileRank: Math.round(pct * 10) / 10,
-    cohortSize: activePeers.length,
-    cohortLabel: label,
-  };
-}
-
-// ─────────────────────────────────────────────────────────────
-// LAYER 5 — Adaptive Composite Scoring
+// Weights:  Activity 30% | Impact 35% | Consistency 20% | Reach 15%
 //
-// 5a. Detect developer archetype from L1/L2/L3 signals.
-// 5b. Select archetype-specific weight vector.
-// 5c. Compute weighted composite in [0, 100].
+// Distribution shaping via sigmoid re-centering:
+//   shaped = sigmoid((x/100 - 0.5) * 6) * 100
 //
-// Anti-gaming: burstScore ≥ 0.8 triggers a "spam penalty"
-// that hard-caps the activity component contribution.
+// This produces the target bands:
+//   0–30:  weak   (below-average signals, compressed down)
+//   30–60: average
+//   60–80: strong
+//   80–100: elite (tail expanded)
 // ─────────────────────────────────────────────────────────────
 
-type Weights = Layer5Output["weights"];
+const WEIGHTS = {
+  activity:    0.30,
+  impact:      0.35,
+  consistency: 0.20,
+  reach:       0.15,
+} as const;
 
-const WEIGHT_PRESETS: Record<DevArchetype, Weights> = {
-  maintainer: {
-    activity: 0.20, impact: 0.25, consistency: 0.35,
-    reach: 0.10, behavioral: 0.10,
-  },
-  builder: {
-    activity: 0.40, impact: 0.20, consistency: 0.20,
-    reach: 0.10, behavioral: 0.10,
-  },
-  impact_dev: {
-    activity: 0.15, impact: 0.45, consistency: 0.15,
-    reach: 0.15, behavioral: 0.10,
-  },
-  rising_dev: {
-    activity: 0.30, impact: 0.25, consistency: 0.20,
-    reach: 0.10, behavioral: 0.15,
-  },
-  balanced: {
-    activity: 0.25, impact: 0.30, consistency: 0.20,
-    reach: 0.15, behavioral: 0.10,
-  },
-  watch_area: {
-    activity: 0.25, impact: 0.25, consistency: 0.25,
-    reach: 0.15, behavioral: 0.10,
-  },
-};
+function classifyArchetype(
+  l2: L2Features,
+  l3: L3Decayed,
+  finalScore: number
+): Archetype {
+  const { activity, impact, consistency, reach } = l3;
 
-function detectArchetype(
-  l1: Layer1Output,
-  l2: Layer2Output,
-  l3: Layer3Output
-): DevArchetype {
-  // Compound activity: push-volume counts less than PRs/issues/releases.
-  // This means a pure push-spammer scores activity < 0.30 even with
-  // sigmoid-saturated l1.pushes, because prs and releases remain near 0.
-  const activity =
-    (l1.pushes * 0.5 + l1.prs * 2.0 + l1.issues * 1.0 + l1.releases * 2.5) / 6.0;
-  const impact = l1.stars * 0.6 + l1.forks * 0.4;
-  const reach = l1.followers * 0.6 + l1.repos * 0.4;
+  // Elite: top band regardless of sub-score pattern
+  if (finalScore >= 85) return "elite";
 
-  const isHighActivity = activity >= 0.55;
-  const isHighImpact = impact >= 0.55;
-  const isConsistent = l2.consistencyVariance >= 0.65 && l3.recencyBias >= 0.4;
-  const isGrowing = l3.recencyBias >= 0.6;
+  // Ghost: very low signal across ALL dimensions
+  if (activity < 20 && impact < 20 && consistency < 15 && reach < 15)
+    return "ghost";
 
-  // Spam pattern: high raw pushes but negligible PR quality
-  // productivityRatio < 0.15 means nearly no meaningful PRs despite high commit volume
-  const isSpamPattern =
-    l1.pushes > 0.8 && l2.productivityRatio < 0.15 && impact < 0.30;
+  // Impact-led: large accumulated reputation, modest recent activity
+  // (e.g. library author with many stars but irregular commits)
+  if (impact > 60 && activity < 40) return "impact_dev";
 
-  if (isSpamPattern)
-    return "watch_area";
-  if (isHighActivity && !isHighImpact && l2.productivityRatio < 0.5)
+  // Maintainer: consistent activity + decent impact.
+  // Threshold lowered (40/40/35) to match real L3 output ranges
+  // where weekly decay compresses activity to 40–65 even for prolific devs.
+  if (activity > 40 && consistency > 40 && impact > 35) return "maintainer";
+
+  // Builder: high activity but inconsistency (bursty, low polish)
+  if (activity > 45 && consistency < 35 && !l2.spamPenaltyApplied)
     return "builder";
-  if (isHighImpact && !isHighActivity)
-    return "impact_dev";
-  if (isConsistent && isHighActivity && impact >= 0.35)
-    return "maintainer";
-  if (isGrowing && (activity >= 0.45 || impact >= 0.45 || reach >= 0.45))
-    return "rising_dev";
 
-  const isLowEverything =
-    activity < 0.30 && impact < 0.30 && l2.consistencyVariance < 0.35;
-  if (isLowEverything)
-    return "watch_area";
+  // Rising: mid-range score, no spam, positive reach signals
+  if (!l2.spamPenaltyApplied && finalScore >= 40 && finalScore < 70)
+    return "rising_dev";
 
   return "balanced";
 }
 
-export function computeLayer5(
-  l1: Layer1Output,
-  l2: Layer2Output,
-  l3: Layer3Output
-): Layer5Output {
-  const archetype = detectArchetype(l1, l2, l3);
-  const weights = WEIGHT_PRESETS[archetype];
+export function layer4(
+  l3: L3Decayed,
+  l2: L2Features,
+  history: HistoricalEntry[],
+  snapshotCount: number
+): L4Result {
+  // Weighted composite (0–100 range input)
+  const rawComposite =
+    l3.activity    * WEIGHTS.activity    +
+    l3.impact      * WEIGHTS.impact      +
+    l3.consistency * WEIGHTS.consistency +
+    l3.reach       * WEIGHTS.reach;
 
-  // Sub-scores (0–1)
-  const activityRaw =
-    (sigmoid(l3.decayedPushes, 0.08, 20) +
-      sigmoid(l3.decayedPRs, 0.25, 6) * 1.5 +
-      sigmoid(l3.decayedIssues, 0.18, 8) +
-      sigmoid(l3.decayedReleases, 0.60, 2) * 2) /
-    6;
+  // Distribution shaping — stretches tails, compresses mid-range
+  const finalScore = shapeDistribution(rawComposite);
 
-  // Spam penalty: a burst without corresponding PR quality gets capped
-  const spamPenalty = l2.burstScore >= 0.8 ? 0.55 : 1.0;
-  const activityScore = activityRaw * spamPenalty;
+  // ── Trend (EMA-based) ─────────────────────────────────────
+  //   EMA smooths the current score against the previous to
+  //   dampen single-snapshot noise.
+  //   trend = EMA(current, previous) - previous
+  //         = (0.7 * current + 0.3 * previous) - previous
+  //         = 0.7 * (current - previous)
+  //
+  //   So trend is always 70% of the raw delta — conservative.
+  //   Positive = improving, negative = declining.
+  let trend = 0;
+  let trendLabel: L4Result["trendLabel"] = "stable";
 
-  const impactScore = l1.stars * 0.55 + l1.forks * 0.45;
-  const consistencyScore =
-    l2.consistencyVariance * 0.6 + (1 - l2.burstScore) * 0.4;
-  const reachScore = l1.followers * 0.55 + l1.repos * 0.45;
-  const behavioralScore =
-    l2.productivityRatio * 0.5 + l2.impactEfficiency * 0.5;
+  if (history.length >= 1) {
+    const previous = history[history.length - 1]!.totalScore;
+    // EMA: α=0.7 weights current score heavily
+    trend = 0.7 * (finalScore - previous);
 
-  const composite =
-    activityScore * weights.activity +
-    impactScore * weights.impact +
-    consistencyScore * weights.consistency +
-    reachScore * weights.reach +
-    behavioralScore * weights.behavioral;
-
-  return {
-    archetype,
-    weights,
-    compositeScore: clamp(composite * 100, 0, 100),
-  };
-}
-
-// ─────────────────────────────────────────────────────────────
-// LAYER 6 — Trend Engine
-//
-// Uses EMA + OLS slope over historical totalScores to classify
-// momentum and compute a bounded trend bonus.
-//
-// Prevents false positives: a single good snapshot is not
-// "accelerating"; we require at least 3 data points.
-// ─────────────────────────────────────────────────────────────
-export function computeLayer6(history: HistoricalScore[]): Layer6Output {
-  if (history.length < 2) {
-    return {
-      ema: history.map((h) => h.totalScore),
-      slope: 0,
-      momentum: "stable",
-      trendBonus: 0,
-    };
+    if (trend > 2)  trendLabel = "accelerating";
+    if (trend < -2) trendLabel = "decelerating";
   }
 
-  // Sort chronologically
-  const sorted = [...history].sort(
-    (a, b) => a.takenAt.getTime() - b.takenAt.getTime()
+  // ── Confidence ────────────────────────────────────────────
+  const conf = clamp(
+    Math.log(snapshotCount + 1) / Math.log(20),
+    0, 1
   );
-  const scores = sorted.map((h) => h.totalScore);
 
-  const emaSeries = ema(scores, Math.min(scores.length, 5));
-  const slope = lsSlope(emaSeries);
+  const archetype = classifyArchetype(l2, l3, finalScore);
 
-  // Slope thresholds relative to score scale (0–100)
-  let momentum: Layer6Output["momentum"];
-  if (slope > 1.5) momentum = "accelerating";
-  else if (slope < -1.5) momentum = "decelerating";
-  else momentum = "stable";
-
-  // Trend bonus: ±5 points max, proportional to slope
-  const trendBonus = clamp(slope * 0.8, -5, 5);
-
-  return { ema: emaSeries, slope, momentum, trendBonus };
-}
-
-// ─────────────────────────────────────────────────────────────
-// LAYER 7 — Confidence Layer
-//
-// Produces a trust multiplier based on:
-//   - Number of historical snapshots (more = more reliable)
-//   - Data quality (penalises missing weeklyActivity, etc.)
-//
-// A developer with 1 snapshot gets confidence ≈ 0.35.
-// A developer with 12+ snapshots gets confidence ≈ 0.95.
-// This prevents viral newcomers from being over-ranked.
-// ─────────────────────────────────────────────────────────────
-export function computeLayer7(
-  snapshotCount: number,
-  snapshot: RawSnapshot
-): Layer7Output {
-  // Snapshot confidence via sigmoid (midpoint = 10 snapshots)
-  const snapshotConfidence = sigmoid(snapshotCount, 0.35, 8);
-
-  // Data quality penalties
-  let quality = 1.0;
-  if (!snapshot.weeklyActivity || snapshot.weeklyActivity.length === 0)
-    quality -= 0.15; // missing granular data
-  if (snapshot.repoStats.totalRepos === 0)
-    quality -= 0.10; // no repos at all
-  if (snapshot.profile.followers === 0 && snapshot.profile.public_repos === 0)
-    quality -= 0.20; // profile effectively empty
-
-  const dataQuality = clamp(quality);
-  const trustScore = clamp(snapshotConfidence * dataQuality);
-
-  return { snapshotConfidence, dataQuality, trustScore };
+  return {
+    rawComposite,
+    finalScore,
+    archetype,
+    confidence: Math.round(conf * 1000) / 1000,
+    trend:      Math.round(trend * 100) / 100,
+    trendLabel,
+  };
 }
