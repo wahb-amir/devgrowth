@@ -6,7 +6,7 @@ import { registerScheduledJobs } from "./jobs/scheduler.js";
 import { discoverDev } from "./jobs/discover/job.js";
 import { ingestDev } from "./jobs/ingest/job.js";
 import { jobQueue } from "./jobs/queue.js";
-import { scoreDevV3 } from "./jobs/score/job.js";
+import { scoreDevV3Full } from "./jobs/score/job.js";
 import { generateInsightsJob } from "./jobs/insights/job.js";
 
 async function main() {
@@ -64,7 +64,7 @@ function registerJobHandlers() {
 
   jobQueue.register("ingest:developer", ingestDev);
 
-  jobQueue.register("score:developer", scoreDevV3);
+  jobQueue.register("score:developer", scoreDevV3Full);
 
   jobQueue.register("generate:insights", generateInsightsJob);
 

@@ -1,64 +1,65 @@
 // =============================================================
-// scorer-v3.ts — V3 pipeline orchestrator
+// scorer-v3full.ts — Main orchestrator
 // =============================================================
 
-import { layer1, layer2, layer3, layer4 } from "./layers.js";
+import { layer0, layer1, layer2, layer3, layer4, layer5 } from "./layers.js";
+import { computeNarrative } from "./narrative.js";
+import { confidenceScore }  from "./math.js";
 import type { V3Input, V3Output } from "./types.js";
 
-export const SCORER_VERSION = "v3.0.0";
+export const SCORER_VERSION = "v3.1.0";
 
-export function scoreV3(input: V3Input): V3Output {
-  const warnings: string[] = [];
-  const computedAt = new Date();
-
-  const {
-    profile,
-    history = [],
-    snapshotCount = history.length + 1,
-  } = input;
-
-  // Defensive: warn when weekly data is absent (L3 uses fallback)
-  const weeklySlices = profile.weeklyActivity ?? [];
-  if (weeklySlices.length === 0) {
-    warnings.push(
-      "weeklyActivity missing — temporal decay uses 15-day midpoint fallback"
-    );
-  }
+export function scoreV3Full(input: V3Input): V3Output {
+  const { snapshot, history = [], cohortPeers = [], snapshotCount } = input;
+  const snapCount = snapshotCount ?? history.length + 1;
 
   // ── Run pipeline ──────────────────────────────────────────
-  const l1 = layer1(profile);
-  const l2 = layer2(l1, weeklySlices);
-  const l3 = layer3(l2, weeklySlices);
-  const l4 = layer4(l3, l2, history, snapshotCount);
+  const l0 = layer0(snapshot);
+  const l1 = layer1(snapshot, l0);
+  const l2 = layer2(snapshot, l0, l1);
+  const l3 = layer3(snapshot, l2, history);
+  const l4 = layer4(snapshot, l2.activity * 0.3 + l2.impact * 0.35 + l2.quality * 0.20 + l2.consistency * 0.15, cohortPeers);
+  const l5 = layer5(l3, l1, history, snapCount, l0);
 
-  // Anti-exploit summary
-  const burstFlagged = l2.burstRatio > 3.0; // matches BURST_RATIO_THRESHOLD in layers.ts
-  if (l2.spamPenaltyApplied) warnings.push("Spam guard triggered: high push-to-PR ratio");
-  if (burstFlagged)          warnings.push("Burst guard triggered: peak week >4× average");
+  // Previous sub-scores for tension detection
+  const prevSubScores = history.length > 0 && history[history.length - 1]!.subScores
+    ? history[history.length - 1]!.subScores!
+    : undefined;
+
+  const l6 = computeNarrative(l1, l2, l3, l4, l5, snapCount, prevSubScores);
+
+  const conf = confidenceScore(snapCount, l0.dataQualityScore);
+
+  const allWarnings = [...l0.warnings];
 
   return {
-    finalScore:  Math.round(l4.finalScore  * 100) / 100,
-    archetype:   l4.archetype,
-    confidence:  l4.confidence,
-    trend:       l4.trend,
-    trendLabel:  l4.trendLabel,
+    finalScore:        Math.round(l5.shapedScore   * 100) / 100,
+    archetype:         l5.archetype,
+    percentileRank:    l4.percentileRank,
+    confidence:        Math.round(conf             * 1000) / 1000,
+    confidenceLevel:   l5.confidenceLevel,
+    confidenceInterval: l5.confidenceInterval,
+    momentum:          l3.momentumLabel,
+    trend:             Math.round(l3.velocity       * 100) / 100,
     subScores: {
       activity:    Math.round(l3.activity    * 100) / 100,
       impact:      Math.round(l3.impact      * 100) / 100,
+      quality:     Math.round(l3.quality     * 100) / 100,
       consistency: Math.round(l3.consistency * 100) / 100,
       reach:       Math.round(l3.reach       * 100) / 100,
     },
     antiExploit: {
-      spamFlagged:   l2.spamPenaltyApplied,
-      burstFlagged,
-      pushToPrRatio: Math.round(l2.pushToPrRatio * 10) / 10,
-      burstRatio:    Math.round(l2.burstRatio    * 10) / 10,
+      spamFlagged:             l2.spamPenaltyApplied,
+      singleRepoConcentration: l1.spamFlags.singleRepoConcentration,
+      lowSubstanceCommits:     l1.spamFlags.lowSubstanceCommits,
+      pushToPrMergeAnomaly:    l1.spamFlags.pushToMergeRatioAnomaly,
     },
-    layers: { l1, l2, l3, l4 },
+    narrative: l6,
+    layers: { l0, l1, l2, l3, l4, l5 },
     meta: {
       scorerVersion: SCORER_VERSION,
-      computedAt,
-      warnings,
+      computedAt:    new Date(),
+      warnings:      allWarnings,
     },
   };
 }

@@ -1,127 +1,167 @@
 // =============================================================
-// math.ts — Pure math primitives for V3
+// math.ts — All mathematical primitives for V3
 // =============================================================
 
-/**
- * Clamp a value to [min, max].
- */
+export const ε = 1e-9;
+
 export const clamp = (n: number, min = 0, max = 100): number =>
   Math.max(min, Math.min(max, n));
 
-/**
- * Standard logistic sigmoid: σ(x) = 1 / (1 + e^-x)
- * Domain: ℝ → (0, 1)
- */
+export const clamp01 = (n: number): number =>
+  Math.max(0, Math.min(1, n));
+
+// ── Sigmoid family ────────────────────────────────────────────
+
+/** Standard logistic: σ(x) = 1 / (1 + e^-x) */
 export const sigmoid = (x: number): number => 1 / (1 + Math.exp(-x));
 
 /**
- * Calibrated sigmoid for scoring: sig(x / k)
+ * Calibrated scoring sigmoid: sig(x, k)
+ *   = sigmoid((x/k − 1) × 4)
  *
- * Transforms a raw metric x with anchor k into (0, 1) where:
- *   x = 0   → 0.500  (never collapses to zero — prevents impact collapse)
- *   x = k   → 0.731  (mid-tier dev)
- *   x = 2k  → 0.880  (strong dev)
- *   x = 3k  → 0.953  (elite dev, diminishing returns here)
- *
- * Steepness=4 produces a curve that is linear around the midpoint
- * and compresses gracefully at the extremes.
- *
- * @param raw   Raw metric value (e.g. 115 pushes)
- * @param k     Anchor constant = "what a mid-tier dev produces"
+ * Properties:
+ *   x = 0   → 0.018  (floor — never collapses)
+ *   x = k   → 0.500  (50th-percentile anchor)
+ *   x = 2k  → 0.982  (strong; diminishing returns)
+ *   x → ∞   → 1.000  (ceiling)
  */
-export const sig = (raw: number, k: number): number =>
-  sigmoid((raw / k - 1) * 4);
+export const sig = (x: number, k: number): number =>
+  sigmoid((x / k - 1) * 4);
 
 /**
- * Exponential time decay.
- * w(t) = e^(-t / halfLife)
+ * Distribution shaper.
+ * Maps a linear 0–100 composite onto a shaped 0–100 curve
+ * that compresses mid-range and expands tail separation.
  *
- * halfLife=10 days → w(10d) = 0.368, w(30d) = 0.050
- * This is harsher than the v2 half-life (which used ln2 scaling).
- * Rationale: 30-day-old activity should contribute < 5% to current score.
+ *   shaped = sigmoid((x/100 − 0.5) × 6) × 100
+ *
+ *   x=20 → ~14  (weak, pushed down)
+ *   x=50 → ~50  (neutral midpoint preserved)
+ *   x=80 → ~86  (strong, expanded)
+ *   x=95 → ~97  (elite separation)
  */
-export const decay = (ageDays: number, halfLife = 10): number =>
+export const shapeDistribution = (raw: number): number =>
+  clamp(sigmoid((raw / 100 - 0.5) * 6) * 100);
+
+// ── Decay functions ───────────────────────────────────────────
+
+/**
+ * Exponential decay: e^(-t / halfLife)
+ *
+ * τ_fast = 14 days → event recency (yesterday >> last month)
+ * τ_slow = 90 days → heat/presence decay (still around?)
+ */
+export const decay = (ageDays: number, halfLife: number): number =>
   Math.exp(-ageDays / halfLife);
 
 /**
- * Population mean.
+ * Age normalization factor — sub-linear compression.
+ *
+ * factor = 1 / (accountAgeDays ^ 0.4)
+ *
+ * Prevents legacy advantage: doubling account age raises the
+ * denominator by only 2^0.4 ≈ 1.32, not 2×.
+ * Result is multiplied into activity to get per-unit-time rate.
  */
+export const ageNormFactor = (accountAgeDays: number): number =>
+  1 / Math.max(1, Math.pow(accountAgeDays, 0.4));
+
+// ── Statistics ────────────────────────────────────────────────
+
 export const mean = (xs: number[]): number => {
   if (xs.length === 0) return 0;
   return xs.reduce((s, v) => s + v, 0) / xs.length;
 };
 
-/**
- * Population standard deviation.
- */
 export const stdDev = (xs: number[]): number => {
   if (xs.length < 2) return 0;
   const m = mean(xs);
   return Math.sqrt(xs.reduce((s, v) => s + (v - m) ** 2, 0) / xs.length);
 };
 
-/**
- * Coefficient of variation: stdDev / mean.
- * Used to measure consistency variance.
- * Returns 0 when mean is 0 (no activity → no variance penalty).
- */
 export const cov = (xs: number[]): number => {
   const m = mean(xs);
-  if (m === 0) return 0;
-  return stdDev(xs) / m;
+  return m === 0 ? 0 : stdDev(xs) / m;
 };
 
 /**
- * EMA-based trend.
- * trend = α·current + (1-α)·previous
- * With α=0.7, recent score dominates.
- *
- * Returns the delta: positive = growing, negative = declining.
+ * EMA series: α · xₙ + (1 − α) · EMAₙ₋₁
+ * Returns array of same length as input.
  */
-export const emaTrend = (
-  current: number,
-  previous: number,
-  alpha = 0.7
-): number => {
-  const ema = alpha * current + (1 - alpha) * previous;
-  return ema - previous; // delta against the stable baseline
+export const emaSeries = (xs: number[], alpha: number): number[] => {
+  if (xs.length === 0) return [];
+  const out = [xs[0]!];
+  for (let i = 1; i < xs.length; i++) {
+    out.push(alpha * xs[i]! + (1 - alpha) * out[i - 1]!);
+  }
+  return out;
 };
 
 /**
- * Confidence score.
- * clamp(log(snapshots + 1) / log(20))
- *
- * snapshots=0  → 0.000
- * snapshots=1  → 0.153
- * snapshots=5  → 0.389
- * snapshots=10 → 0.535
- * snapshots=19 → 1.000  (asymptote target)
- * snapshots=50 → 1.000  (clamped)
+ * Student's t critical value (95% CI, two-tailed) lookup.
+ * Approximation for N ≥ 30 uses 1.96.
  */
-export const confidence = (snapshotCount: number): number =>
-  clamp(Math.log(snapshotCount + 1) / Math.log(20), 0, 1);
+export const tCritical95 = (n: number): number => {
+  if (n <= 1)  return 12.706;
+  if (n === 2) return 4.303;
+  if (n === 3) return 3.182;
+  if (n === 4) return 2.776;
+  if (n === 5) return 2.571;
+  if (n <= 10) return 2.228;
+  if (n <= 20) return 2.086;
+  if (n <= 30) return 2.042;
+  return 1.960;
+};
 
 /**
- * Final distribution shaper.
- * Applies sigmoid to the composite to stretch the tails:
- *   - Compresses 40–60 (average band)
- *   - Expands 70–90 (strong band), making elite separation visible
- *
- * Input:  0–100 (linear composite)
- * Output: 0–100 (shaped)
- *
- * Derivation:
- *   raw sigmoid maps [0,100] → (0.5, 0.731) — too narrow.
- *   Re-centre to [-1, 1] before sigmoid, then re-expand to [0,100]:
- *   shaped = sigmoid((x/100 - 0.5) * 6) * 100
- *
- *   This gives:
- *     x=20  → ~11  (weak, pushed down)
- *     x=50  → ~50  (neutral midpoint is preserved)
- *     x=70  → ~73  (strong, pushed up slightly)
- *     x=85  → ~88  (elite, expanded)
+ * 95% confidence interval around a mean given a sample.
+ * Returns [lower, upper] clamped to [0, 100].
  */
-export const shapeDistribution = (rawScore: number): number => {
-  const centred = (rawScore / 100 - 0.5) * 6;
-  return clamp(sigmoid(centred) * 100);
+export const confidenceInterval = (
+  scores: number[],
+  currentScore: number
+): [number, number] => {
+  const n = scores.length;
+  if (n < 2) return [Math.max(0, currentScore - 25), Math.min(100, currentScore + 25)];
+
+  const sd = stdDev(scores);
+  const t  = tCritical95(n);
+  const margin = (sd / Math.sqrt(n)) * t;
+
+  return [
+    Math.max(0,   Math.round((currentScore - margin) * 10) / 10),
+    Math.min(100, Math.round((currentScore + margin) * 10) / 10),
+  ];
 };
+
+/**
+ * Percentile rank of value within a peer array.
+ * Returns 0–100.
+ */
+export const percentileRank = (value: number, peers: number[]): number => {
+  if (peers.length === 0) return 50;
+  const below = peers.filter(p => p < value).length;
+  return clamp((below / peers.length) * 100);
+};
+
+/**
+ * Confidence level label from snapshot count and data quality.
+ */
+export const confidenceLevel = (
+  snapshotCount: number,
+  dataQuality: number
+): import("./types.js").ConfidenceLevel => {
+  const raw = Math.log(snapshotCount + 1) / Math.log(20) * dataQuality;
+  if (raw < 0.15) return "very_low";
+  if (raw < 0.35) return "low";
+  if (raw < 0.60) return "medium";
+  if (raw < 0.80) return "high";
+  return "very_high";
+};
+
+/** Scalar confidence 0–1 */
+export const confidenceScore = (
+  snapshotCount: number,
+  dataQuality: number
+): number =>
+  clamp01(Math.log(snapshotCount + 1) / Math.log(20) * dataQuality);
