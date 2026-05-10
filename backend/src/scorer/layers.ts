@@ -55,7 +55,7 @@ const ARCHETYPE_WEIGHTS: Record<Archetype, WeightVector> = {
   framework_author: { activity: 0.15, impact: 0.40, quality: 0.20, consistency: 0.10, reach: 0.15 },
   infra_engineer:   { activity: 0.25, impact: 0.25, quality: 0.30, consistency: 0.15, reach: 0.05 },
   research_dev:     { activity: 0.15, impact: 0.35, quality: 0.35, consistency: 0.10, reach: 0.05 },
-  maintainer:       { activity: 0.20, impact: 0.20, quality: 0.25, consistency: 0.25, reach: 0.10 },
+  maintainer:       { activity: 0.30, impact: 0.15, quality: 0.25, consistency: 0.25, reach: 0.05 },
   builder:          { activity: 0.35, impact: 0.20, quality: 0.15, consistency: 0.20, reach: 0.10 },
   impact_dev:       { activity: 0.15, impact: 0.45, quality: 0.15, consistency: 0.10, reach: 0.15 },
   rising_dev:       { activity: 0.30, impact: 0.20, quality: 0.20, consistency: 0.15, reach: 0.15 },
@@ -165,12 +165,33 @@ export function layer1(
   }
 
   // ── Spam Flags ────────────────────────────────────────────
-  const totalPushes = snapshot.activity_30d.pushes;
-  const totalMerged = prs?.merged ?? 0;
-  const avgLines    = cs?.avgLinesChanged ?? 999; // unknown = assume OK
+  //
+  // Each flag only fires when we have real evidence, not absence of data.
+  //
+  // pushToMergeRatioAnomaly: requires real prSignals. When prSignals is
+  //   absent we have no ground truth on merges — assume innocent.
+  //   Also requires activity_30d.prs === 0 (not just merged === 0) to
+  //   avoid false-positives when a dev opens PRs but the enriched pipeline
+  //   hasn't captured merge status yet.
+  //
+  // singleRepoConcentration: skip when the repos array is a synthetic
+  //   fallback (one entry whose repoId === 'aggregate-fallback'). That
+  //   entry always has 100% concentration by construction, not by behavior.
+  const totalPushes  = snapshot.activity_30d.pushes;
+  const avgLines     = cs?.avgLinesChanged ?? 999;
 
-  const lowSubstanceCommits      = cs ? avgLines < 5 : false;
-  const pushToMergeRatioAnomaly  = totalPushes > 30 && totalMerged === 0;
+  const lowSubstanceCommits = cs ? avgLines < 5 : false;
+
+  // Only flag merge anomaly when we actually have PR signal data
+  const pushToMergeRatioAnomaly = prs
+    ? (totalPushes > 30 && prs.merged === 0 && prs.opened === 0)
+    : false;
+
+  // Skip concentration check on synthetic fallback repos
+  const isSyntheticFallback =
+    repos.length === 1 && repos[0]?.repoId === 'aggregate-fallback';
+  const effectiveSingleRepoConcentration =
+    isSyntheticFallback ? false : singleRepoConcentration;
 
   return {
     prMergeRate,
@@ -179,7 +200,7 @@ export function layer1(
     repoBreadthScore,
     repoImportanceScore,
     spamFlags: {
-      singleRepoConcentration,
+      singleRepoConcentration: effectiveSingleRepoConcentration,
       lowSubstanceCommits,
       pushToMergeRatioAnomaly,
     },
@@ -198,16 +219,24 @@ export function layer2(
   const rs = snapshot.repoStats;
   const p  = snapshot.profile;
 
-  // Age-normalized push count: prevents legacy advantage
-  const ageNormPushes = a.pushes * l0.ageNormFactor * 30; // scale back to /30d unit
-
   // ── Activity (0–100) ─────────────────────────────────────
-  // Uses age-normalized pushes to prevent old-account inflation.
+  //
+  // Age normalization is NOT applied to activity.
+  // Rationale: the 30-day window already normalizes time.
+  // 115 pushes this month means 115 pushes this month regardless
+  // of account age. Applying age norm here double-penalizes senior
+  // devs for their tenure and crushes scores for 2+ year accounts.
+  // Age normalization belongs on CUMULATIVE signals (stars, forks)
+  // where an old account genuinely has an unfair head start.
+  //
+  // Weight split: PRs are worth more per unit than pushes.
+  // A PR represents reviewed, merged, meaningful work.
+  // Pushes may include WIP commits, amends, rebases.
   const rawActivity = clamp(
-    sig(ageNormPushes,  K.pushes)   * 35 +
-    sig(a.prs,         K.prs)       * 30 +
-    sig(a.issues,      K.issues)    * 20 +
-    sig(a.releases,    K.releases)  * 15
+    sig(a.pushes,    K.pushes)    * 30 +
+    sig(a.prs,       K.prs)       * 35 +   // PRs weighted above pushes
+    sig(a.issues,    K.issues)    * 20 +
+    sig(a.releases,  K.releases)  * 15
   );
 
   // ── Impact (0–100) ────────────────────────────────────────
@@ -218,34 +247,76 @@ export function layer2(
     sig(rs.totalForks, K.forks)  * 25
   );
 
-  // ── Quality (0–100) ── NEW LAYER ─────────────────────────
+  // ── Quality (0–100) ─────────────────────────────────────
   // Captures the *how*, not just the *how much*.
-  const quality = clamp(
+  // All terms on the same 0–100 output scale — no division needed.
+  //   prMergeRate:   sig(0–1, K=0.6)  * 35 → 0–35
+  //   reviewRatio:   sig(0–1, K=0.4)  * 25 → 0–25
+  //   substance:     0–1              * 25 → 0–25
+  //   breadth:       0–1              * 15 → 0–15
+  //   total max                            = 100
+  const qualityScore = clamp(
     sig(l1.prMergeRate,             K.prMergeRate)    * 35 +
     sig(l1.reviewParticipationRate, K.reviewRatio)    * 25 +
-    l1.commitSubstanceScore                           * 25 * 100 +  // already 0–1
-    l1.repoBreadthScore                               * 15 * 100    // already 0–1
-  ) / 100; // re-normalise the mixed units
-
-  const qualityScore = clamp(quality * 100);
+    l1.commitSubstanceScore                           * 25 +
+    l1.repoBreadthScore                               * 15
+  );
 
   // ── Consistency (0–100) ───────────────────────────────────
-  const weeklyPushes = snapshot.weeklyActivity.map(w => w.pushes);
-  let activityVariancePenalty = 0;
-  if (weeklyPushes.length >= 2) {
-    const weeklyCoV = cov(weeklyPushes);
-    activityVariancePenalty = clamp(weeklyCoV * 20, 0, 40);
+  //
+  // Consistency measures TIME DISTRIBUTION, not volume.
+  // It is fully independent of rawActivity so that a dev who
+  // pushes 200 commits on day 1 and nothing for 29 days does not
+  // score the same as one who commits steadily every day.
+  //
+  // consistencyBase = 1 / (1 + CoV)
+  //   CoV=0 (perfectly even) → base=1.0
+  //   CoV=1 (sd = mean)      → base=0.5
+  //   CoV→∞ (all in one day) → base→0
+  //
+  // streakScore = proportion of weeks that had ANY activity.
+  //   All 4 weeks active → 1.0; only 1 week → 0.25
+  //
+  // Natural recency pattern (50,35,20,10) has CoV≈0.53:
+  //   base = 1/(1+0.53) ≈ 0.65 → consistencyBase*70 = 45.5
+  //   streak = 4/4 = 1.0 → streakBonus*30 = 30
+  //   consistency ≈ 75 — correctly reflects steady engagement
+  //   even though week volumes decline (recency weighting).
+  const weeklyActivity = snapshot.weeklyActivity;
+  let activityVariancePenalty = 0; // kept for L3 compatibility
+  let consistency = 50;            // neutral default: no weekly data
+
+  if (weeklyActivity.length >= 2) {
+    const weeklyPushes = weeklyActivity.map(w => w.pushes + w.prs * 2);
+    const weeklyCoV    = cov(weeklyPushes);
+    activityVariancePenalty = clamp(weeklyCoV * 20, 0, 40); // legacy field
+
+    const consistencyBase = 1 / (1 + weeklyCoV);  // 0–1
+
+    // Streak: weeks with any meaningful activity (push OR pr)
+    const activeWeeks  = weeklyActivity.filter(w => w.pushes + w.prs > 0).length;
+    const streakScore  = activeWeeks / weeklyActivity.length; // 0–1
+
+    consistency = clamp(consistencyBase * 70 + streakScore * 30);
   }
-  const consistency = clamp(rawActivity - activityVariancePenalty);
 
   // ── Reach (0–100) ─────────────────────────────────────────
-  const reach = clamp(
-    sig(p.followers,    K.followers) * 55 +
-    sig(p.public_repos, K.repos)     * 25 +
-    l1.repoImportanceScore           * 20 * 100
-  ) / 100;
-
-  const reachScore = clamp(reach * 100);
+  //
+  // All terms kept on the same 0–100 output scale.
+  // repoImportanceScore is 0–1; multiply by 20 to contribute 0–20.
+  // repos K=20 (raised from 15) so 23 repos is above-midpoint but
+  // does not dominate reach for a dev with 3 followers.
+  //
+  // Max decomposition:
+  //   followers: sig(∞,15)*50 → 50
+  //   repos:     sig(∞,20)*30 → 30
+  //   importance:         1*20 → 20
+  //   total max           → 100
+  const reachScore = clamp(
+    sig(p.followers,    K.followers) * 50 +
+    sig(p.public_repos, 20)          * 30 +
+    l1.repoImportanceScore           * 20
+  );
 
   // ── Spam penalty ──────────────────────────────────────────
   const spamFlags = l1.spamFlags;
@@ -411,12 +482,14 @@ export function layer4(
 function detectArchetype(l3: L3Temporal, l1: L1QualitySignals): Archetype {
   const { activity, impact, quality, consistency, reach } = l3;
 
-  // Ghost: near-zero *actual* output signals.
-  // We check l3.activity and l3.impact (real signals) but NOT quality/reach
-  // because those use neutral defaults when commit/PR data is absent.
-  // The decisive signal is: did this person produce anything at all?
-  const hasNoRealActivity = activity < 8 && consistency < 8;
-  const hasNoRealImpact   = impact < 8;
+  // Ghost: no meaningful output across any real signal.
+  // Uses l3.activity and l3.impact only — these are volume signals
+  // that are genuinely zero when there is no output. Quality and
+  // consistency can show neutral defaults (50) even on empty profiles
+  // due to absent prSignals/commitSignals being filled with mid-range
+  // defaults. Do NOT gate on those — only on real output signals.
+  const hasNoRealActivity = activity < 5;
+  const hasNoRealImpact   = impact   < 5;
   if (hasNoRealActivity && hasNoRealImpact) return "ghost";
 
   // Framework Author: very high impact + importance + decent quality

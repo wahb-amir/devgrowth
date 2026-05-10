@@ -22,30 +22,36 @@ function detectTension(
   l3: L3Temporal,
   prevSubScores?: HistoricalSubScores
 ): TensionType {
-  // High activity but impact is falling (or was already low)
-  if (l3.activity > 55 && l3.impact < 30) {
+  // Use L2 (pre-decay, pre-spam-penalty) scores for structural tension.
+  // L3 values can be suppressed by the spam penalty or recency multiplier,
+  // masking genuine contradictions between signal dimensions.
+  // The tension is about the structural relationship between signals,
+  // not their time-weighted magnitude.
+
+  // Active but low-visibility: high output, low ecosystem traction.
+  // Threshold lowered to 45 (was 55) so moderate-output devs aren't excluded.
+  if (l2.activity > 45 && l2.impact < 35) {
     return "high_activity_declining_impact";
   }
 
-  // High impact (reputation) but activity has cooled
-  if (l3.impact > 60 && l3.activity < 30) {
+  // Coasting: strong accumulated reputation, activity has cooled
+  if (l2.impact > 55 && l2.activity < 30) {
     return "high_impact_declining_activity";
   }
 
-  // Activity is falling but reach (followers) is growing — lagging signal
-  if (l3.activity < 30 && l3.reach > 55) {
+  // Reach disproportionate to output — viral project, lagging follow-through
+  if (l2.activity < 25 && l2.reach > 50) {
     return "rising_reach_no_output";
   }
 
-  // More commits but PR quality signals dropped
+  // Cross-snapshot tensions (require history)
   if (prevSubScores) {
-    const activityGrew  = l3.activity  > prevSubScores.activity  * 1.1;
-    const qualityFell   = l3.quality   < prevSubScores.quality   * 0.85;
+    const activityGrew = l2.activity > prevSubScores.activity * 1.1;
+    const qualityFell  = l2.quality  < prevSubScores.quality  * 0.85;
     if (activityGrew && qualityFell) {
       return "quality_activity_divergence";
     }
 
-    // Usually consistent, but burst detected this period
     const wasConsistent = prevSubScores.consistency > 55;
     const burstNow      = l2.activityVariancePenalty > 20;
     if (wasConsistent && burstNow) {
