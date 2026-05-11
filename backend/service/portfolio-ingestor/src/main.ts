@@ -1,6 +1,8 @@
 import "dotenv/config";
 import { loadConfig } from "./lib/config.js";
 import { buildServer } from "./server.js";
+import { jobQueue } from "./jobs/queue.js";
+import { discoverPortfolio } from "./jobs/ingestion/job.js";
 import { connectDatabase } from "./db/connection.js";
 async function main() {
   const config = loadConfig();
@@ -9,6 +11,7 @@ async function main() {
   // 2. Server Initialization
   const server = await buildServer();
   await connectDatabase();
+  registerJobHandlers();
   try {
     await server.listen({ port: config.PORT, host: config.HOST });
     console.info(`✅ Server listening on http://${config.HOST}:${config.PORT}`);
@@ -31,6 +34,14 @@ async function main() {
 
   process.on("SIGTERM", () => void shutdown("SIGTERM"));
   process.on("SIGINT", () => void shutdown("SIGINT"));
+}
+
+function registerJobHandlers() {
+  
+  jobQueue.register("discover:portfolio", discoverPortfolio);
+
+
+  console.info("✅ Job handlers registered.");
 }
 
 main().catch((err) => {
