@@ -2,7 +2,7 @@ import "dotenv/config";
 import { loadConfig } from "./lib/config.js";
 import { buildServer } from "./server.js";
 import { jobQueue } from "./jobs/queue.js";
-import { discoverPortfolio } from "./jobs/ingestion/job.js";
+import { discoverPortfolio } from "./jobs/discover/job.js";
 import { connectDatabase } from "./db/connection.js";
 async function main() {
   const config = loadConfig();
@@ -37,7 +37,7 @@ async function main() {
 }
 
 function registerJobHandlers() {
-  
+
   jobQueue.register("discover:portfolio", discoverPortfolio);
 
 
