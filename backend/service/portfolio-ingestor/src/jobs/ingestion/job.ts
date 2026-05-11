@@ -1,5 +1,6 @@
 import { PortfolioModel } from "../../db/models/index.js";
 import { jobQueue, type JobHandler } from "../queue.js";
+import { normalizeSource } from "../../lib/normalizeSource.js";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -7,7 +8,7 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 
 type DiscoverPortfolioPayload = {
   url: string;
-  source?: "manual" | "search" | "import";
+  source?: "manual" | "search" | "import" | "discovery" | "user";
 };
 
 /* ---------------- HELPERS ---------------- */
@@ -168,7 +169,7 @@ export const discoverPortfolio: JobHandler = async (job) => {
         ingestionStatus: "pending",
         failure: null,
         lastQueuedAt: new Date(),
-        source: source || "discovery",
+        source: normalizeSource(source)
       });
     }
 

@@ -2,6 +2,7 @@ import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { PortfolioModel } from "../db/models/index.js";
 import { jobQueue } from "../jobs/queue.js";
+import { normalizeSource } from "../lib/normalizeSource.js";
 
 export type Portfolio = {
   sourceUrl: string;
@@ -152,7 +153,7 @@ export async function portfolioRoutes(fastify: FastifyInstance) {
           url: normalizedUrl,
           sourceUrl,
           hostname,
-          source: "user",
+          source: normalizeSource("user")
         },
       });
 
