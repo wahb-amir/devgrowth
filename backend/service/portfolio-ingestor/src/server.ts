@@ -3,7 +3,7 @@ import cors from "@fastify/cors";
 import helmet from "@fastify/helmet";
 import sensible from "@fastify/sensible";
 import { getConfig } from "./lib/config.js";
-
+import { healthRoutes } from "./routes/health.js";
 export async function buildServer() {
   const config = getConfig();
   const isDev = config.NODE_ENV === "development";
@@ -27,7 +27,8 @@ export async function buildServer() {
     origin: config.CORS_ORIGIN,
     credentials: true,
   });
-
+  fastify.register(healthRoutes);
+  
   // Global Error Handler
   fastify.setErrorHandler((error, _req, reply) => {
     fastify.log.error(error);
