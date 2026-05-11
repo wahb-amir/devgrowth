@@ -1,14 +1,14 @@
 import "dotenv/config";
 import { loadConfig } from "./lib/config.js";
 import { buildServer } from "./server.js";
-
+import { connectDatabase } from "./db/connection.js";
 async function main() {
   const config = loadConfig();
   console.info(`🚀 Starting API [${config.NODE_ENV}]`);
 
   // 2. Server Initialization
   const server = await buildServer();
-
+  await connectDatabase();
   try {
     await server.listen({ port: config.PORT, host: config.HOST });
     console.info(`✅ Server listening on http://${config.HOST}:${config.PORT}`);

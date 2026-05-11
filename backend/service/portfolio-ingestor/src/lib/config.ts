@@ -5,7 +5,8 @@ const envSchema = z.object({
   HOST: z.string().default('0.0.0.0'),
   NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),
   LOG_LEVEL: z.enum(['trace', 'debug', 'info', 'warn', 'error', 'fatal']).default('info'),
-
+  MONGODB_URI: z.string().default('mongodb://localhost:27017'),
+  MONGODB_DB_NAME: z.string().default('portfolio-ingestor'),
   CORS_ORIGIN: z.string().default('*'),
 });
 
