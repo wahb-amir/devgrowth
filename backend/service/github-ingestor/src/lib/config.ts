@@ -28,7 +28,7 @@ const envSchema = z.object({
 })
 
 /**
- * 2. Infer TypeScript type from schema (🔥 important)
+ * 2. Infer TypeScript type from schema 
  */
 export type Config = z.infer<typeof envSchema>
 
