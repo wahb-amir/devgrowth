@@ -1,35 +1,43 @@
 // src/insights/engine.ts
 
 /**
- * Developer Narrative Intelligence Engine
+ * Developer Narrative Intelligence Engine  v2.1
  *
- * Produces 3–6 high-signal cards as a coherent structured analysis.
- * All logic is deterministic and rule-based.
+ * Produces 3–5 high-signal cards as a coherent structured analysis.
  *
- * Card order: headline → strengths → tensions → trajectory → confidence → watch_areas
+ * Key invariants:
+ *   1. Score band gates all narrative capabilities (no optimism for low scores).
+ *   2. ConceptRegistry enforces semantic uniqueness — no idea appears twice.
+ *   3. Card order: headline → strength → tension → trajectory → confidence → watch_area
+ *   4. Fully deterministic and rule-based.
  */
 
-import { InsightCard } from "../db/models/insight.model.js";
+import type { InsightCard } from "../db/models/insight.model.js";
 import { classifyArchetype } from "./archetypes.js";
 import type { Archetype } from "./archetypes.js";
+import {
+  classifyScoreBand,
+  getConstrainedArchetypeTitle,
+  isAllowed,
+} from "./score-band.js";
+import type { ScoreBand } from "./score-band.js";
+import { ConceptRegistry } from "./dedup.js";
+import type { ConceptKey } from "./dedup.js";
 
-// ─── Public types ──────────────────────────────────────────────────────────────
+// ─── Public API types ──────────────────────────────────────────────────────────
 
 export type EngineInput = {
   username: string;
-  // Current snapshot sub-scores
   activityScore: number;
   impactScore: number;
   consistencyScore: number;
   reachScore: number;
   totalScore: number;
-  // Trend direction per dimension (clamped -1..1, /100 scale)
   activityTrend: number;
   impactTrend: number;
   consistencyTrend: number;
   reachTrend: number;
   overallTrendScore: number;
-  // Activity shape from normalizedProfile
   repos: number;
   stars: number;
   followers: number;
@@ -37,7 +45,6 @@ export type EngineInput = {
   prs: number;
   issues: number;
   releases: number;
-  // Window sizes used for confidence
   recentSnapshotCount: number;
   previousSnapshotCount: number;
 };
@@ -46,14 +53,22 @@ export type NarrativeResult = {
   archetype: Archetype;
   archetypeTitle: string;
   trendLabel: "improving" | "stable" | "declining";
+  scoreBand: ScoreBand;
   cards: InsightCard[];
   keySignals: string[];
   warnings: string[];
 };
 
-// ─── Internal helpers ──────────────────────────────────────────────────────────
+// ─── Internal types ────────────────────────────────────────────────────────────
 
 type TrendLabel = "improving" | "stable" | "declining";
+
+type CardCandidate = {
+  card: InsightCard;
+  concepts: ConceptKey[];
+};
+
+// ─── Utility functions ─────────────────────────────────────────────────────────
 
 function trendLabel(score: number): TrendLabel {
   if (score >= 0.06) return "improving";
@@ -61,344 +76,455 @@ function trendLabel(score: number): TrendLabel {
   return "stable";
 }
 
-function collaborationRatio(
-  pushes: number,
-  prs: number,
-  issues: number
-): number {
-  const total = pushes + prs + issues;
-  if (total === 0) return 0;
-  return ((prs + issues) / total) * 100;
+function collaborationRatio(p: number, pr: number, i: number): number {
+  const t = p + pr + i;
+  return t === 0 ? 0 : ((pr + i) / t) * 100;
 }
 
-function totalActivity(
-  pushes: number,
-  prs: number,
-  issues: number,
-  releases: number
-): number {
-  return pushes + prs + issues + releases;
-}
-
-/** Confidence tier based on how many snapshots we have to work with. */
 function confidenceTier(
-  recentCount: number,
-  previousCount: number
+  recent: number,
+  previous: number
 ): "high" | "medium" | "low" {
-  const total = recentCount + previousCount;
-  if (total >= 6 && recentCount >= 3) return "high";
+  const total = recent + previous;
+  if (total >= 6 && recent >= 3) return "high";
   if (total >= 3) return "medium";
   return "low";
 }
 
-// ─── Tension detection ─────────────────────────────────────────────────────────
+function makeCard(
+  fields: Omit<InsightCard, never>
+): InsightCard {
+  return fields as InsightCard;
+}
 
-type Tension = {
-  key: string;
+// ─── Headline card ─────────────────────────────────────────────────────────────
+
+function buildHeadlineCard(
+  archetypeTitle: string,
+  archetypeDescription: string,
+  trend: TrendLabel,
+  band: ScoreBand
+): CardCandidate {
+  // Tone of the trailing trend clause is gated by band
+  let trendClause: string;
+  if (trend === "improving") {
+    trendClause = isAllowed(band, "positive_trajectory")
+      ? "Overall trajectory is positive."
+      : "Some signals show early movement, though the profile is still developing.";
+  } else if (trend === "declining") {
+    trendClause = "Overall signals are declining.";
+  } else {
+    trendClause = "The profile shows no clear directional momentum.";
+  }
+
+  const type =
+    trend === "improving" && isAllowed(band, "positive_trajectory")
+      ? "milestone"
+      : trend === "declining"
+      ? "watch_area"
+      : "neutral";
+
+  return {
+    card: makeCard({
+      type,
+      category: "overall",
+      title: archetypeTitle,
+      body: `${archetypeDescription} ${trendClause}`,
+      relatedSubScore: "overall",
+      triggerTags: ["headline", `band:${band}`, `trend:${trend}`],
+      priority: 100,
+    }),
+    concepts: ["trajectory_positive", "trajectory_negative", "trajectory_mixed"],
+  };
+}
+
+// ─── Strength card ─────────────────────────────────────────────────────────────
+
+type StrengthCandidate = {
+  conceptKey: ConceptKey;
+  score: number;
   body: string;
-  severity: "high" | "medium";
 };
 
-function detectTensions(input: EngineInput): Tension[] {
+function detectBestStrength(
+  input: EngineInput,
+  band: ScoreBand
+): StrengthCandidate | null {
   const {
-    activityScore,
-    impactScore,
-    consistencyScore,
-    reachScore,
-    pushes,
-    prs,
-    issues,
-    repos,
-    stars,
-    activityTrend,
-    impactTrend,
-    reachTrend,
+    activityScore, impactScore, consistencyScore, reachScore,
+    pushes, prs, issues, activityTrend, impactTrend, repos, stars,
   } = input;
 
-  const tensions: Tension[] = [];
   const collab = collaborationRatio(pushes, prs, issues);
 
-  // Activity vs impact gap — the most common meaningful tension
-  if (activityScore >= 55 && impactScore < 35) {
-    tensions.push({
-      key: "activity_impact_gap",
-      body:
-        "High contribution volume is not translating into ecosystem impact. " +
-        "This typically indicates work is concentrated in low-visibility or private repositories, " +
-        "or that commit patterns are not yet generating engagement (stars, forks, dependents).",
-      severity: "high",
-    });
-  } else if (activityScore >= 45 && impactScore < 30) {
-    tensions.push({
-      key: "activity_impact_gap_moderate",
-      body:
-        "Contribution activity outpaces ecosystem impact. " +
-        "Visibility and downstream engagement have not yet scaled with commit volume.",
-      severity: "medium",
+  // For low band the strength bar is lower — acknowledge the relative best signal
+  const activityThreshold = band === "low" ? 45 : 65;
+  const impactThreshold   = band === "low" ? 35 : 60;
+  const consisThreshold   = band === "low" ? 40 : 60;
+  const reachThreshold    = band === "low" ? 30 : 55;
+
+  const candidates: StrengthCandidate[] = [];
+
+  if (activityScore >= activityThreshold) {
+    const vol = pushes + prs + issues + input.releases;
+    const qualifier =
+      band === "low"
+        ? "Activity is the strongest available signal in this profile."
+        : isAllowed(band, "strong_strength_claim") && vol > 100
+        ? `Contribution velocity is a standout signal, with over ${vol} tracked events in the recent window.`
+        : "Contribution velocity is above the threshold for consistent engagement.";
+    candidates.push({
+      conceptKey: "activity_positive",
+      score: activityScore,
+      body: qualifier,
     });
   }
 
-  // Reach vs consistency gap
-  if (reachScore < 30 && consistencyScore >= 55) {
-    tensions.push({
-      key: "consistency_reach_gap",
-      body:
-        "Contribution cadence is strong but ecosystem visibility remains limited. " +
-        "Consistent work is occurring without proportional public recognition or follower growth.",
-      severity: "medium",
+  if (impactScore >= impactThreshold) {
+    const qualifier =
+      band === "low"
+        ? "Impact is the relatively strongest signal in this profile, though still below average overall."
+        : stars >= 5
+        ? "Repository engagement signals indicate meaningful visibility within the ecosystem."
+        : "Contributions are generating above-average downstream engagement relative to activity volume.";
+    candidates.push({
+      conceptKey: "impact_positive",
+      score: impactScore,
+      body: qualifier,
     });
   }
 
-  // Impact growing faster than activity — positive tension worth surfacing
-  if (impactTrend > activityTrend + 0.08 && impactScore >= 40) {
+  if (consistencyScore >= consisThreshold) {
+    const qualifier =
+      band === "low"
+        ? "Contribution cadence shows early signs of regularity."
+        : "Contribution cadence is stable and repeatable, with no significant gaps in the measured period.";
+    candidates.push({
+      conceptKey: "consistency_positive",
+      score: consistencyScore,
+      body: qualifier,
+    });
+  }
+
+  if (reachScore >= reachThreshold) {
+    const qualifier =
+      band === "low"
+        ? "Reach is developing, though still limited in absolute terms."
+        : repos >= 10
+        ? `Active presence across ${repos} repositories contributes to a growing public footprint.`
+        : "Follower and repository engagement indicate rising public recognition.";
+    candidates.push({
+      conceptKey: "reach_positive",
+      score: reachScore,
+      body: qualifier,
+    });
+  }
+
+  if (!candidates.length) return null;
+
+  // Return the single highest-scoring strength candidate
+  return candidates.sort((a, b) => b.score - a.score)[0];
+}
+
+function buildStrengthCard(
+  s: StrengthCandidate
+): CardCandidate {
+  return {
+    card: makeCard({
+      type: "strength",
+      category: "overall",
+      title: "Primary signal",
+      body: s.body,
+      relatedSubScore: "overall",
+      triggerTags: ["strength", s.conceptKey],
+      priority: 85,
+    }),
+    concepts: [s.conceptKey],
+  };
+}
+
+// ─── Tension card ──────────────────────────────────────────────────────────────
+
+type TensionCandidate = {
+  conceptKeys: ConceptKey[];
+  severity: "high" | "medium";
+  body: string;
+};
+
+function detectBestTension(
+  input: EngineInput,
+  band: ScoreBand
+): TensionCandidate | null {
+  const {
+    activityScore, impactScore, consistencyScore, reachScore,
+    activityTrend, impactTrend, reachTrend, stars, pushes, prs, issues,
+  } = input;
+
+  const tensions: TensionCandidate[] = [];
+  const collab = collaborationRatio(pushes, prs, issues);
+
+  // Activity vs impact — the highest-value tension for this profile type
+  if (activityScore >= 45 && impactScore < 33) {
     tensions.push({
-      key: "impact_outpacing_activity",
+      conceptKeys: ["impact_weak_vs_activity", "impact_negative"],
+      severity: activityScore >= 55 ? "high" : "medium",
+      body:
+        band === "low"
+          ? "Contribution volume exists but is not yet generating ecosystem impact. " +
+            "Most activity appears concentrated in private or low-visibility repositories."
+          : "Contribution volume is not translating into ecosystem impact. " +
+            "Activity is concentrated in areas that do not generate stars, forks, or downstream engagement.",
+    });
+  }
+
+  // Reach lagging despite consistency
+  if (consistencyScore >= 50 && reachScore < 30) {
+    tensions.push({
+      conceptKeys: ["reach_weak_vs_consistency", "reach_negative"],
+      severity: "medium",
+      body:
+        "Contribution cadence is present but ecosystem visibility has not developed alongside it. " +
+        "Consistent work is occurring without proportional public recognition.",
+    });
+  }
+
+  // Impact improving faster than activity (positive tension — worth surfacing)
+  if (
+    impactTrend > activityTrend + 0.08 &&
+    impactScore >= 40 &&
+    isAllowed(band, "positive_trajectory")
+  ) {
+    tensions.push({
+      conceptKeys: ["impact_positive", "activity_positive"],
+      severity: "medium",
       body:
         "Impact is growing faster than activity volume, suggesting recent contributions " +
         "are landing in higher-visibility repositories or generating stronger downstream engagement.",
-      severity: "medium",
     });
   }
 
   // High reach, weak consistency
   if (reachScore >= 50 && consistencyScore < 35) {
     tensions.push({
-      key: "reach_consistency_gap",
-      body:
-        "Strong ecosystem visibility is not matched by consistent contribution activity. " +
-        "Recognition may be driven by legacy work rather than current momentum.",
+      conceptKeys: ["reach_positive", "consistency_negative"],
       severity: "high",
-    });
-  }
-
-  // Rising activity, stagnant or falling reach
-  if (activityTrend > 0.08 && reachTrend < -0.04) {
-    tensions.push({
-      key: "rising_activity_falling_reach",
       body:
-        "Activity is increasing while ecosystem reach is contracting. " +
-        "New contributions are not expanding the public footprint.",
-      severity: "medium",
+        "Ecosystem visibility is not matched by consistent contribution activity. " +
+        "Recognition may reflect legacy work rather than current momentum.",
     });
   }
 
-  // Stars high relative to impact score (recognition not captured in score)
+  // Stars suggest prior impact but current scores are weak
   if (stars >= 10 && impactScore < 40) {
     tensions.push({
-      key: "stars_impact_mismatch",
-      body:
-        "Repository star count suggests prior high-visibility work, " +
-        "but current impact signals are weak — indicating reduced activity in those repositories.",
+      conceptKeys: ["impact_negative"],
       severity: "medium",
+      body:
+        "Historical repository star count suggests prior visibility, " +
+        "but current impact signals are weak — indicating reduced activity in those repositories.",
     });
   }
 
-  // Very low collaboration for active developer
+  // Low collaboration for an active developer
   if (collab < 5 && activityScore >= 50) {
     tensions.push({
-      key: "low_collab_high_activity",
-      body:
-        "Contribution volume is solid, but almost entirely commit-driven with minimal " +
-        "pull request or issue engagement. This limits collaborative visibility.",
+      conceptKeys: ["collaboration_low"],
       severity: "medium",
-    });
-  }
-
-  // Impact trend falling despite relatively high impact score
-  if (impactTrend < -0.08 && impactScore >= 50) {
-    tensions.push({
-      key: "impact_declining_from_strength",
       body:
-        "Impact has been a relative strength but is showing a notable decline. " +
-        "Recent contributions may be shifting toward lower-visibility areas.",
-      severity: "high",
+        "Activity is almost entirely commit-driven with minimal pull request or issue engagement. " +
+        "This limits collaborative visibility and dampens both impact and reach scoring.",
     });
   }
 
-  // Return at most 2, prioritising high severity
-  return tensions
-    .sort((a, b) => (a.severity === "high" ? -1 : 1))
-    .slice(0, 2);
+  if (!tensions.length) return null;
+
+  // Prefer high severity; within same severity, first in list wins
+  return tensions.sort((a, b) =>
+    a.severity === b.severity ? 0 : a.severity === "high" ? -1 : 1
+  )[0];
 }
 
-// ─── Strength detection ────────────────────────────────────────────────────────
-
-type Strength = {
-  key: string;
-  body: string;
-  score: number; // used for prioritisation
-};
-
-function detectStrengths(input: EngineInput): Strength[] {
-  const {
-    activityScore,
-    impactScore,
-    consistencyScore,
-    reachScore,
-    repos,
-    pushes,
-    prs,
-    issues,
-    releases,
-    stars,
-    activityTrend,
-    impactTrend,
-    consistencyTrend,
-    reachTrend,
-  } = input;
-
-  const strengths: Strength[] = [];
-  const collab = collaborationRatio(pushes, prs, issues);
-  const vol = totalActivity(pushes, prs, issues, releases);
-
-  if (activityScore >= 65) {
-    strengths.push({
-      key: "strong_activity",
-      body:
-        `Contribution velocity is a standout signal. ` +
-        (vol > 100
-          ? `With over ${vol} tracked events in the recent window, activity is well above typical developer cadence.`
-          : `Consistent multi-vector activity across pushes, PRs, and issues demonstrates sustained engagement.`),
-      score: activityScore,
-    });
-  }
-
-  if (impactScore >= 60) {
-    strengths.push({
-      key: "strong_impact",
-      body:
-        `Ecosystem impact is a clear strength. ` +
-        (stars >= 5
-          ? `Repository star count and engagement signals indicate meaningful visibility within the ecosystem.`
-          : `Contributions are generating above-average downstream engagement relative to activity volume.`),
-      score: impactScore,
-    });
-  }
-
-  if (consistencyScore >= 60) {
-    strengths.push({
-      key: "strong_consistency",
-      body:
-        "Contribution cadence is stable and repeatable. " +
-        "The absence of significant gaps suggests a reliable development rhythm across the measured period.",
-      score: consistencyScore,
-    });
-  }
-
-  if (reachScore >= 55) {
-    strengths.push({
-      key: "strong_reach",
-      body:
-        "Ecosystem visibility is a notable strength. " +
-        (repos >= 10
-          ? `Active presence across ${repos} repositories contributes to a broad public footprint.`
-          : "Follower growth and repository engagement indicate rising public recognition."),
-      score: reachScore,
-    });
-  }
-
-  // Trend-based strength: something accelerating significantly
-  if (activityTrend > 0.12 && activityScore >= 45) {
-    strengths.push({
-      key: "accelerating_activity",
-      body:
-        "Activity growth rate is elevated relative to the prior period. " +
-        "Contribution velocity is accelerating, not just holding steady.",
-      score: activityScore + 10,
-    });
-  }
-
-  if (impactTrend > 0.1 && impactScore >= 35) {
-    strengths.push({
-      key: "accelerating_impact",
-      body:
-        "Impact is improving at a faster rate than the underlying activity growth, " +
-        "suggesting contributions are shifting toward higher-visibility areas.",
-      score: impactScore + 10,
-    });
-  }
-
-  if (collab > 30 && activityScore >= 45) {
-    strengths.push({
-      key: "high_collaboration",
-      body:
-        `Over ${Math.round(collab)}% of activity is collaborative in nature (PRs and issues), ` +
-        "indicating strong engagement with other contributors and maintainers.",
-      score: 60,
-    });
-  }
-
-  // Return top 2 strengths by score
-  return strengths.sort((a, b) => b.score - a.score).slice(0, 2);
+function buildTensionCard(t: TensionCandidate): CardCandidate {
+  return {
+    card: makeCard({
+      type: t.severity === "high" ? "watch_area" : "opportunity",
+      category: "overall",
+      title: "Signal tension",
+      body: t.body,
+      relatedSubScore: "overall",
+      triggerTags: ["tension", `severity:${t.severity}`, ...t.conceptKeys],
+      priority: t.severity === "high" ? 90 : 75,
+    }),
+    concepts: t.conceptKeys,
+  };
 }
 
-// ─── Watch area detection ──────────────────────────────────────────────────────
+// ─── Trajectory card ───────────────────────────────────────────────────────────
 
-type WatchArea = {
-  key: string;
+function buildTrajectoryCard(
+  input: EngineInput,
+  trend: TrendLabel,
+  band: ScoreBand
+): CardCandidate | null {
+  const {
+    activityTrend, impactTrend, consistencyTrend, reachTrend,
+    activityScore, impactScore, totalScore,
+  } = input;
+
+  // Suppress for flat profiles — nothing new to say
+  if (
+    Math.abs(activityTrend) < 0.05 &&
+    Math.abs(impactTrend) < 0.05 &&
+    Math.abs(consistencyTrend) < 0.05
+  ) {
+    return null;
+  }
+
+  // For low band, suppress positive trajectory claims
+  if (trend === "improving" && !isAllowed(band, "positive_trajectory")) {
+    return null;
+  }
+
+  const leadDim =
+    impactTrend > activityTrend && impactTrend > consistencyTrend
+      ? "impact"
+      : activityTrend > consistencyTrend
+      ? "activity"
+      : "consistency";
+
+  const lagDim =
+    reachTrend < impactTrend && reachTrend < activityTrend
+      ? "reach"
+      : impactScore < activityScore - 20
+      ? "impact"
+      : null;
+
+  let body: string;
+
+  if (trend === "improving") {
+    // Only strong/elite bands reach here
+    body = lagDim
+      ? `${leadDim.charAt(0).toUpperCase() + leadDim.slice(1)} is the primary growth driver, ` +
+        `though ${lagDim} remains the lagging dimension. ` +
+        `Closing the ${lagDim} gap will determine whether improvement compounds or levels off.`
+      : `${leadDim.charAt(0).toUpperCase() + leadDim.slice(1)} is driving recent improvement. ` +
+        `Overall score trajectory points upward if this signal holds.`;
+  } else if (trend === "declining") {
+    body =
+      `Downward pressure is led by ${leadDim === "activity" ? "falling activity" : `a weakening ${leadDim} signal`}. ` +
+      (totalScore > 40
+        ? "The profile retains enough baseline mass that a brief recovery could stabilise the trend."
+        : "At the current score level, continued decline risks reducing the profile to minimal-signal territory.");
+  } else {
+    body =
+      `${leadDim.charAt(0).toUpperCase() + leadDim.slice(1)} is showing slight positive movement ` +
+      `while ${lagDim ?? "other dimensions"} remain flat. ` +
+      "No clear directional breakout is present yet.";
+  }
+
+  const conceptKey: ConceptKey =
+    trend === "improving"
+      ? "trajectory_positive"
+      : trend === "declining"
+      ? "trajectory_negative"
+      : "trajectory_mixed";
+
+  return {
+    card: makeCard({
+      type: "trajectory",
+      category: "overall",
+      title: "Trajectory",
+      body,
+      relatedSubScore: "overall",
+      triggerTags: ["trajectory", `trend:${trend}`, `leading:${leadDim}`],
+      priority: 70,
+    }),
+    concepts: [conceptKey],
+  };
+}
+
+// ─── Confidence card ───────────────────────────────────────────────────────────
+
+function buildConfidenceCard(
+  input: EngineInput,
+  tier: "high" | "medium" | "low",
+  band: ScoreBand
+): CardCandidate | null {
+  // Only emit when confidence is not high — no value in stating the obvious
+  if (tier === "high") return null;
+
+  const total = input.recentSnapshotCount + input.previousSnapshotCount;
+
+  const body =
+    tier === "low"
+      ? `Analysis is based on ${total} snapshot${total === 1 ? "" : "s"}. ` +
+        "Trend and trajectory claims should be treated as provisional. " +
+        "Confidence will improve as more data accumulates."
+      : `Profile history covers ${total} snapshots. ` +
+        "Directional signals are reasonably reliable, though score volatility may not yet be fully captured.";
+
+  return {
+    card: makeCard({
+      type: "confidence",
+      category: "overall",
+      title: tier === "low" ? "Limited data" : "Moderate confidence",
+      body,
+      relatedSubScore: "overall",
+      triggerTags: ["confidence", `tier:${tier}`, `snapshots:${total}`],
+      priority: 60,
+    }),
+    concepts: ["confidence_limited"],
+  };
+}
+
+// ─── Watch area card ───────────────────────────────────────────────────────────
+
+type WatchCandidate = {
+  conceptKeys: ConceptKey[];
   body: string;
 };
 
-function detectWatchAreas(input: EngineInput): WatchArea[] {
+function detectBestWatchArea(
+  input: EngineInput,
+  band: ScoreBand
+): WatchCandidate | null {
   const {
-    activityScore,
-    impactScore,
-    consistencyScore,
-    reachScore,
-    activityTrend,
-    impactTrend,
-    consistencyTrend,
-    reachTrend,
-    totalScore,
-    pushes,
-    prs,
-    issues,
+    activityScore, impactScore, consistencyScore, reachScore,
+    activityTrend, consistencyTrend, totalScore, pushes, prs, issues,
   } = input;
 
-  const areas: WatchArea[] = [];
   const collab = collaborationRatio(pushes, prs, issues);
+  const candidates: WatchCandidate[] = [];
 
   if (totalScore < 30) {
-    areas.push({
-      key: "low_total_score",
+    candidates.push({
+      conceptKeys: ["low_total_score"],
       body:
-        "Overall profile score is in the lower tier. " +
-        "Sustained progress across activity, impact, and consistency will be needed before this profile signals meaningful ecosystem presence.",
-    });
-  }
-
-  if (impactScore < 30 && activityScore >= 35) {
-    areas.push({
-      key: "weak_impact",
-      body:
-        "Impact remains the weakest signal relative to activity. " +
-        "Contributing to repositories with broader audiences or improving repo discoverability " +
-        "could help close this gap.",
+        "Overall score is in the lower tier. " +
+        "Sustained progress across activity, impact, and consistency is needed before this profile signals meaningful ecosystem presence.",
     });
   }
 
   if (reachScore < 25) {
-    areas.push({
-      key: "weak_reach",
+    candidates.push({
+      conceptKeys: ["reach_negative", "reach_weak_vs_reach_score"],
       body:
-        "Ecosystem reach is limited. " +
-        "Follower count, repository stars, and forks are all low — " +
+        "Ecosystem reach is minimal. Follower count, repository stars, and forks are all low — " +
         "the public footprint has not yet established itself.",
     });
   }
 
   if (consistencyTrend < -0.08) {
-    areas.push({
-      key: "declining_consistency",
+    candidates.push({
+      conceptKeys: ["consistency_negative"],
       body:
-        "Contribution regularity is deteriorating. " +
-        "Gaps in cadence are widening compared to the prior period.",
+        "Contribution regularity is deteriorating. Cadence gaps are widening compared to the prior period.",
     });
   }
 
   if (activityTrend < -0.08 && activityScore < 50) {
-    areas.push({
-      key: "declining_activity",
+    candidates.push({
+      conceptKeys: ["activity_negative"],
       body:
         "Activity is falling from an already moderate baseline. " +
         "Without a reversal, overall score momentum will stall.",
@@ -406,196 +532,61 @@ function detectWatchAreas(input: EngineInput): WatchArea[] {
   }
 
   if (collab < 5 && impactScore < 35) {
-    areas.push({
-      key: "no_collaboration_signal",
+    candidates.push({
+      conceptKeys: ["collaboration_low"],
       body:
         "Minimal PR and issue activity means the profile generates almost no collaborative signal, " +
-        "which limits both impact and reach scoring.",
+        "which limits both impact and reach.",
     });
   }
 
-  return areas.slice(0, 2);
+  return candidates[0] ?? null;
 }
 
-// ─── Key signals and warnings for top-level fields ────────────────────────────
+function buildWatchAreaCard(w: WatchCandidate): CardCandidate {
+  return {
+    card: makeCard({
+      type: "watch_area",
+      category: "overall",
+      title: "Watch area",
+      body: w.body,
+      relatedSubScore: "overall",
+      triggerTags: ["watch_area", ...w.conceptKeys],
+      priority: 55,
+    }),
+    concepts: w.conceptKeys,
+  };
+}
 
-function deriveKeySignals(tensions: Tension[], strengths: Strength[]): string[] {
+// ─── Top-level helpers ─────────────────────────────────────────────────────────
+
+function deriveKeySignals(
+  strengthBody: string | null,
+  tensionBody: string | null
+): string[] {
   const signals: string[] = [];
-  for (const s of strengths) signals.push(s.body.split(".")[0]);
-  for (const t of tensions.filter((t) => t.severity === "high"))
-    signals.push(t.body.split(".")[0]);
+  if (strengthBody) signals.push(strengthBody.split(".")[0]);
+  if (tensionBody) signals.push(tensionBody.split(".")[0]);
   return signals.slice(0, 3);
 }
 
-function deriveWarnings(watchAreas: WatchArea[]): string[] {
-  return watchAreas.map((w) => w.body.split(".")[0]).slice(0, 3);
+function deriveWarnings(watchBody: string | null): string[] {
+  if (!watchBody) return [];
+  return [watchBody.split(".")[0]];
 }
 
-// ─── Card construction ─────────────────────────────────────────────────────────
-
-function makeCard(
-  overrides: Partial<InsightCard> & Pick<InsightCard, "type" | "category" | "title" | "body" | "relatedSubScore" | "triggerTags" | "priority">
-): InsightCard {
-  return overrides as InsightCard;
-}
-
-function buildHeadlineCard(
-  input: EngineInput,
-  archetypeTitle: string,
-  archetypeDescription: string,
-  trend: TrendLabel
-): InsightCard {
-  const trendClause =
-    trend === "improving"
-      ? "Overall trajectory is positive."
-      : trend === "declining"
-      ? "Overall trajectory is declining."
-      : "The profile is in a holding pattern with no strong directional shift.";
-
-  return makeCard({
-    type: trend === "improving" ? "milestone" : trend === "declining" ? "watch_area" : "neutral",
-    category: "overall",
-    title: archetypeTitle,
-    body: `${archetypeDescription} ${trendClause}`,
-    relatedSubScore: "overall",
-    triggerTags: ["headline", `trend:${trend}`],
-    priority: 100,
-  });
-}
-
-function buildStrengthCard(strength: Strength): InsightCard {
-  return makeCard({
-    type: "strength",
-    category: "overall",
-    title: "Key strength",
-    body: strength.body,
-    relatedSubScore: "overall",
-    triggerTags: ["strength", strength.key],
-    priority: 85,
-  });
-}
-
-function buildTensionCard(tension: Tension): InsightCard {
-  return makeCard({
-    type: tension.severity === "high" ? "watch_area" : "opportunity",
-    category: "overall",
-    title: "Signal tension",
-    body: tension.body,
-    relatedSubScore: "overall",
-    triggerTags: ["tension", tension.key, `severity:${tension.severity}`],
-    priority: tension.severity === "high" ? 90 : 75,
-  });
-}
-
-function buildTrajectoryCard(input: EngineInput, trend: TrendLabel): InsightCard | null {
-  const {
-    activityTrend,
-    impactTrend,
-    consistencyTrend,
-    reachTrend,
-    activityScore,
-    impactScore,
-    totalScore,
-  } = input;
-
-  // Only emit a trajectory card when there's something specific and non-obvious to say
-  const leadingDimension =
-    impactTrend > activityTrend && impactTrend > consistencyTrend
-      ? "impact"
-      : activityTrend > consistencyTrend
-      ? "activity"
-      : "consistency";
-
-  const laggingDimension =
-    reachTrend < impactTrend && reachTrend < activityTrend
-      ? "reach"
-      : impactScore < activityScore - 20
-      ? "impact"
-      : null;
-
-  if (trend === "stable" && Math.abs(activityTrend) < 0.05 && Math.abs(impactTrend) < 0.05) {
-    // Nothing interesting to say about a flat profile
-    return null;
-  }
-
-  let body: string;
-
-  if (trend === "improving") {
-    body =
-      laggingDimension
-        ? `The primary growth driver is ${leadingDimension}, though ${laggingDimension} remains the lagging dimension. ` +
-          `If the leading signal continues, overall score has headroom to grow — ` +
-          `but closing the ${laggingDimension} gap will determine whether growth compounds or plateaus.`
-        : `${leadingDimension.charAt(0).toUpperCase() + leadingDimension.slice(1)} is the primary driver of recent improvement. ` +
-          `If this momentum holds, overall score trajectory points upward across the next measurement window.`;
-  } else if (trend === "declining") {
-    body =
-      `Downward pressure is led by ${leadingDimension === "activity" ? "falling activity" : `a weakening ${leadingDimension} signal`}. ` +
-      (totalScore > 40
-        ? "The profile retains enough overall mass that a brief recovery could stabilize the trend."
-        : "Given the current score level, a continued decline risks pushing the profile into a low-signal state.");
-  } else {
-    body =
-      `Signals are mixed: ${leadingDimension} is trending positive while ${laggingDimension ?? "other dimensions"} ` +
-      `show limited movement. Overall momentum is neutral, with no clear directional breakout yet.`;
-  }
-
-  return makeCard({
-    type: "trajectory",
-    category: "overall",
-    title: "Trajectory analysis",
-    body,
-    relatedSubScore: "overall",
-    triggerTags: ["trajectory", `trend:${trend}`, `leading:${leadingDimension}`],
-    priority: 70,
-  });
-}
-
-function buildConfidenceCard(
-  input: EngineInput,
-  tier: "high" | "medium" | "low"
-): InsightCard | null {
-  const { recentSnapshotCount, previousSnapshotCount, totalScore } = input;
-  const total = recentSnapshotCount + previousSnapshotCount;
-
-  // Only emit a confidence card when confidence is not high — no need to state the obvious
-  if (tier === "high") return null;
-
-  const body =
-    tier === "low"
-      ? `Analysis is based on limited historical data (${total} snapshot${total === 1 ? "" : "s"}). ` +
-        "Claims about trajectory and trend direction should be treated as provisional. " +
-        "Confidence will improve as more snapshots accumulate."
-      : `Profile history covers a moderate window (${total} snapshots). ` +
-        "Trend directional signals are reasonably reliable, but edge cases and score volatility " +
-        "may not yet be fully captured.";
-
-  return makeCard({
-    type: "confidence",
-    category: "overall",
-    title: tier === "low" ? "Low confidence warning" : "Moderate confidence",
-    body,
-    relatedSubScore: "overall",
-    triggerTags: ["confidence", `tier:${tier}`, `snapshots:${total}`],
-    priority: 60,
-  });
-}
-
-function buildWatchAreaCard(area: WatchArea): InsightCard {
-  return makeCard({
-    type: "watch_area",
-    category: "overall",
-    title: "Watch area",
-    body: area.body,
-    relatedSubScore: "overall",
-    triggerTags: ["watch_area", area.key],
-    priority: 55,
-  });
-}
-
-// ─── Main engine entry point ───────────────────────────────────────────────────
+// ─── Main entry point ──────────────────────────────────────────────────────────
 
 export function runNarrativeEngine(input: EngineInput): NarrativeResult {
+  const band = classifyScoreBand(input.totalScore);
+  const confidence = confidenceTier(
+    input.recentSnapshotCount,
+    input.previousSnapshotCount
+  );
+  const trend = trendLabel(input.overallTrendScore);
+  const registry = new ConceptRegistry();
+
+  // ── Archetype ──────────────────────────────────────────────────────────────
   const archetypeResult = classifyArchetype({
     activityScore: input.activityScore,
     impactScore: input.impactScore,
@@ -612,74 +603,104 @@ export function runNarrativeEngine(input: EngineInput): NarrativeResult {
     consistencyTrend: input.consistencyTrend,
     reachTrend: input.reachTrend,
     totalScore: input.totalScore,
+    band,
   });
 
-  const overallTrend = trendLabel(input.overallTrendScore);
-  const confidence = confidenceTier(
-    input.recentSnapshotCount,
-    input.previousSnapshotCount
+  // Score-band constrained display title
+  const displayTitle = getConstrainedArchetypeTitle(
+    band,
+    archetypeResult.title,
+    input.activityScore,
+    input.impactScore,
+    input.consistencyScore
   );
 
-  const tensions = detectTensions(input);
-  const strengths = detectStrengths(input);
-  const watchAreas = detectWatchAreas(input);
+  // ── Candidate pool ─────────────────────────────────────────────────────────
+  // Build in priority order; each candidate is only admitted if its concept
+  // keys have not yet been claimed.
 
-  // Assemble cards in narrative order
-  const cards: InsightCard[] = [];
+  const candidates: CardCandidate[] = [];
 
-  // 1. Headline — always present
-  cards.push(
-    buildHeadlineCard(
-      input,
-      archetypeResult.title,
-      archetypeResult.description,
-      overallTrend
-    )
+  // 1. Headline — always present, claims all trajectory concept keys
+  const headlineCandidate = buildHeadlineCard(
+    displayTitle,
+    archetypeResult.description,
+    trend,
+    band
+  );
+  // Headline pre-claims trajectory keys so no trajectory card can duplicate the framing
+  candidates.push(headlineCandidate);
+  // Note: we do NOT register headline's concepts yet — trajectory card uses different
+  // concepts (trajectory_positive vs trajectory_negative vs trajectory_mixed); the
+  // headline only claims them as a soft reservation. See admission loop below.
+
+  // 2. Best strength
+  const strengthCandidate = detectBestStrength(input, band);
+  if (strengthCandidate) {
+    candidates.push(buildStrengthCard(strengthCandidate));
+  }
+
+  // 3. Best tension
+  const tensionCandidate = detectBestTension(input, band);
+  if (tensionCandidate) {
+    candidates.push(buildTensionCard(tensionCandidate));
+  }
+
+  // 4. Trajectory — only when not redundant with headline or tension
+  const trajectoryCandidate = buildTrajectoryCard(input, trend, band);
+  if (trajectoryCandidate) {
+    candidates.push(trajectoryCandidate);
+  }
+
+  // 5. Confidence
+  const confidenceCandidate = buildConfidenceCard(input, confidence, band);
+  if (confidenceCandidate) {
+    candidates.push(confidenceCandidate);
+  }
+
+  // 6. Watch area
+  const watchCandidate = detectBestWatchArea(input, band);
+  if (watchCandidate) {
+    candidates.push(buildWatchAreaCard(watchCandidate));
+  }
+
+  // ── Admission loop ─────────────────────────────────────────────────────────
+  // Walk candidates in priority order, admitting each only if its concept
+  // keys are still unclaimed.
+  const sorted = candidates.sort(
+    (a, b) => (b.card.priority ?? 0) - (a.card.priority ?? 0)
   );
 
-  // 2. Strengths — at most 2, only when they add non-obvious information
-  for (const s of strengths) {
-    cards.push(buildStrengthCard(s));
+  const admitted: InsightCard[] = [];
+
+  for (const c of sorted) {
+    if (admitted.length >= 5) break;
+    if (registry.claim(c.concepts)) {
+      admitted.push(c.card);
+    }
   }
 
-  // 3. Tensions — highest priority informational cards
-  for (const t of tensions) {
-    cards.push(buildTensionCard(t));
+  // Guarantee minimum of 3: if we somehow only got 1–2, admit remaining
+  // candidates regardless of dedup (this is a safety valve, not normal path)
+  if (admitted.length < 3) {
+    for (const c of sorted) {
+      if (admitted.length >= 3) break;
+      if (!admitted.includes(c.card)) admitted.push(c.card);
+    }
   }
 
-  // 4. Trajectory — only when meaningful
-  const trajectoryCard = buildTrajectoryCard(input, overallTrend);
-  if (trajectoryCard) cards.push(trajectoryCard);
-
-  // 5. Confidence — only when below high
-  const confidenceCard = buildConfidenceCard(input, confidence);
-  if (confidenceCard) cards.push(confidenceCard);
-
-  // 6. Watch areas — only if not already covered by tensions
-  const tensionKeys = new Set(tensions.map((t) => t.key));
-  for (const area of watchAreas) {
-    // Suppress watch areas that are semantically redundant with detected tensions
-    const redundant =
-      (area.key === "weak_impact" && tensionKeys.has("activity_impact_gap")) ||
-      (area.key === "weak_impact" && tensionKeys.has("activity_impact_gap_moderate")) ||
-      (area.key === "weak_reach" && tensionKeys.has("consistency_reach_gap"));
-    if (!redundant) cards.push(buildWatchAreaCard(area));
-  }
-
-  // Enforce 3–6 card ceiling, sorted by priority
-  const finalCards = cards
-    .sort((a, b) => (b.priority ?? 0) - (a.priority ?? 0))
-    .slice(0, 6);
-
-  const keySignals = deriveKeySignals(tensions, strengths);
-  const warnings = deriveWarnings(watchAreas);
+  // ── Outputs ────────────────────────────────────────────────────────────────
+  const strengthBody = strengthCandidate?.body ?? null;
+  const tensionBody = tensionCandidate?.body ?? null;
+  const watchBody = watchCandidate?.body ?? null;
 
   return {
     archetype: archetypeResult.archetype,
-    archetypeTitle: archetypeResult.title,
-    trendLabel: overallTrend,
-    cards: finalCards,
-    keySignals,
-    warnings,
+    archetypeTitle: displayTitle,
+    trendLabel: trend,
+    scoreBand: band,
+    cards: admitted,
+    keySignals: deriveKeySignals(strengthBody, tensionBody),
+    warnings: deriveWarnings(watchBody),
   };
 }
