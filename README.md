@@ -64,52 +64,54 @@ Dashboard + Profile + Progress Tracking
 ## 📦 Project Structure
 ```
 devgrowth/
-├── backend/
-│   ├── package.json
-│   ├── pnpm-lock.yaml
-│   ├── src/
-│   │   ├── db/
-│   │   │   ├── connection.ts
-│   │   │   └── models/
-│   │   │       ├── developer.model.ts
-│   │   │       ├── index.ts
-│   │   │       ├── insight.model.ts
-│   │   │       ├── raw-snapshot.model.ts
-│   │   │       └── scored-snapshot.model.ts
-│   │   ├── insights/
-│   │   │   ├── archetypes.ts
-│   │   │   ├── dedup.ts
-│   │   │   ├── engine.ts
-│   │   │   └── score-band.ts
-│   │   ├── jobs/
-│   │   │   ├── discover/
-│   │   │   │   └── job.ts
-│   │   │   ├── ingest/
-│   │   │   │   └── job.ts
-│   │   │   ├── insights/
-│   │   │   │   └── job.ts
-│   │   │   ├── queue.ts
-│   │   │   ├── scheduler.ts
-│   │   │   ├── score/
-│   │   │   │   └── job.ts
-│   │   │   └── types.ts
-│   │   ├── lib/
-│   │   │   ├── config.ts
-│   │   │   ├── github-client.ts
-│   │   │   └── github-service.ts
-│   │   ├── main.ts
-│   │   ├── routes/
-│   │   │   ├── developers.ts
-│   │   │   └── health.ts
-│   │   ├── scorer/
-│   │   │   ├── layers.ts
-│   │   │   ├── math.ts
-│   │   │   ├── narrative.ts
-│   │   │   ├── scorer.ts
-│   │   │   ├── Scorerv3full.test.ts
-│   │   │   └── types.ts
-│   │   └── server.ts
-│   └── tsconfig.json
+├── backend
+│   └── service
+│       └── github-ingestor
+│           ├── package.json
+│           ├── pnpm-lock.yaml
+│           ├── src
+│           │   ├── db
+│           │   │   ├── connection.ts
+│           │   │   └── models
+│           │   │       ├── developer.model.ts
+│           │   │       ├── index.ts
+│           │   │       ├── insight.model.ts
+│           │   │       ├── raw-snapshot.model.ts
+│           │   │       └── scored-snapshot.model.ts
+│           │   ├── insights
+│           │   │   ├── archetypes.ts
+│           │   │   ├── dedup.ts
+│           │   │   ├── engine.ts
+│           │   │   └── score-band.ts
+│           │   ├── jobs
+│           │   │   ├── discover
+│           │   │   │   └── job.ts
+│           │   │   ├── ingest
+│           │   │   │   └── job.ts
+│           │   │   ├── insights
+│           │   │   │   └── job.ts
+│           │   │   ├── queue.ts
+│           │   │   ├── scheduler.ts
+│           │   │   ├── score
+│           │   │   │   └── job.ts
+│           │   │   └── types.ts
+│           │   ├── lib
+│           │   │   ├── config.ts
+│           │   │   ├── github-client.ts
+│           │   │   └── github-service.ts
+│           │   ├── main.ts
+│           │   ├── routes
+│           │   │   ├── developers.ts
+│           │   │   └── health.ts
+│           │   ├── scorer
+│           │   │   ├── layers.ts
+│           │   │   ├── math.ts
+│           │   │   ├── narrative.ts
+│           │   │   ├── scorer.ts
+│           │   │   ├── Scorerv3full.test.ts
+│           │   │   └── types.ts
+│           │   └── server.ts
+│           └── tsconfig.json
 ├── LICENSE
 └── README.md
 ```
