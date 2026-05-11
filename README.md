@@ -62,29 +62,57 @@ Dashboard + Profile + Progress Tracking
 ---
 
 ## 📦 Project Structure
-
+```
 devgrowth/
-│
-├── frontend/               # Next.js app (Vercel)
-│   ├── app/
-│   ├── components/
-│   ├── lib/
-│   └── hooks/
-│
-├── backend/               # Fastify API (HF Space)
+├── backend/
+│   ├── package.json
+│   ├── pnpm-lock.yaml
 │   ├── src/
-│   │   ├── routes/
-│   │   ├── controllers/
-│   │   ├── services/
+│   │   ├── db/
+│   │   │   ├── connection.ts
+│   │   │   └── models/
+│   │   │       ├── developer.model.ts
+│   │   │       ├── index.ts
+│   │   │       ├── insight.model.ts
+│   │   │       ├── raw-snapshot.model.ts
+│   │   │       └── scored-snapshot.model.ts
+│   │   ├── insights/
+│   │   │   ├── archetypes.ts
+│   │   │   ├── dedup.ts
+│   │   │   ├── engine.ts
+│   │   │   └── score-band.ts
 │   │   ├── jobs/
-│   │   ├── models/
-│   │   ├── utils/
-│   │   └── db/
-│
-├── shared/
+│   │   │   ├── discover/
+│   │   │   │   └── job.ts
+│   │   │   ├── ingest/
+│   │   │   │   └── job.ts
+│   │   │   ├── insights/
+│   │   │   │   └── job.ts
+│   │   │   ├── queue.ts
+│   │   │   ├── scheduler.ts
+│   │   │   ├── score/
+│   │   │   │   └── job.ts
+│   │   │   └── types.ts
+│   │   ├── lib/
+│   │   │   ├── config.ts
+│   │   │   ├── github-client.ts
+│   │   │   └── github-service.ts
+│   │   ├── main.ts
+│   │   ├── routes/
+│   │   │   ├── developers.ts
+│   │   │   └── health.ts
+│   │   ├── scorer/
+│   │   │   ├── layers.ts
+│   │   │   ├── math.ts
+│   │   │   ├── narrative.ts
+│   │   │   ├── scorer.ts
+│   │   │   ├── Scorerv3full.test.ts
+│   │   │   └── types.ts
+│   │   └── server.ts
+│   └── tsconfig.json
+├── LICENSE
 └── README.md
-
----
+```
 
 ## 🔄 How It Works
 
