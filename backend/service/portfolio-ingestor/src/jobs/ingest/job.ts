@@ -1,10 +1,9 @@
 import { PortfolioModel } from "../../db/models/portfolio.model.js";
-import { type JobHandler } from "../queue.js";
-
+import { type JobHandler ,jobQueue} from "../queue.js";
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 type IngestPortfolioPayload = {
-  url: string;          // normalizedUrl
+  url: string; // normalizedUrl
   sourceUrl?: string;
   hostname?: string;
   priority?: number;
@@ -70,7 +69,8 @@ export const ingestPortfolio: JobHandler = async (job) => {
   const start = Date.now();
 
   try {
-    const { url, sourceUrl, hostname } = (job.payload || {}) as IngestPortfolioPayload;
+    const { url, sourceUrl, hostname } = (job.payload ||
+      {}) as IngestPortfolioPayload;
 
     if (!url || typeof url !== "string") {
       return {
@@ -305,6 +305,15 @@ export const ingestPortfolio: JobHandler = async (job) => {
       },
       { upsert: true },
     );
+
+    await jobQueue.enqueue({
+      name: "parse:portfolio:collect",
+      payload: {
+        url: normalizedUrl,
+        sourceUrl,
+        hostname,
+      },
+    });
 
     return {
       success: true,
