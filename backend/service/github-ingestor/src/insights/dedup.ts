@@ -31,6 +31,8 @@ export type ConceptKey =
   | "reach_weak_vs_reach_score" // watch area: reach is low
   | "collaboration_low"
   | "low_total_score"
+  | "overall_score_low"         // claimed by low/average headline; blocks generic score watch area
+  | "watch_area_slot"           // claimed by first admitted watch area; prevents a second one
   | "confidence_limited"
   | "trajectory_positive"
   | "trajectory_negative"

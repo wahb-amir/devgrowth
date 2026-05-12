@@ -9,8 +9,8 @@
  * overstate a weak profile receives the band as a parameter.
  *
  * Thresholds are based on the scoring system's 0–100 range:
- *   low     →  0 – 34   early-stage / limited-signal profile
- *   average → 35 – 54   developing profile with mixed signals
+ *   low     →  0 – 29   early-stage / limited-signal profile
+ *   average → 30 – 54   developing profile with mixed signals
  *   strong  → 55 – 74   established profile with clear strengths
  *   elite   → 75 – 100  top-tier profile with dominant signals
  */
@@ -18,7 +18,7 @@
 export type ScoreBand = "low" | "average" | "strong" | "elite";
 
 export function classifyScoreBand(totalScore: number): ScoreBand {
-  if (totalScore < 35) return "low";
+  if (totalScore < 30) return "low";
   if (totalScore < 55) return "average";
   if (totalScore < 75) return "strong";
   return "elite";

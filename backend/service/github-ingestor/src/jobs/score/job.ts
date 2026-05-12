@@ -327,10 +327,6 @@ export const scoreDevV3Full: JobHandler = async (job) => {
   //
   // generate:insights reads the persisted narrative directly —
   // no re-scoring needed.
-  //
-  // rank:percentile is a new job that queries the full collection,
-  // computes cohort percentile ranks, and patches percentileRank
-  // back onto the saved document. Fired at lower priority (2).
   jobQueue.enqueue(
     {
       name: "generate:insights",
@@ -343,18 +339,6 @@ export const scoreDevV3Full: JobHandler = async (job) => {
       },
     },
     1   // high priority
-  );
-
-  jobQueue.enqueue(
-    {
-      name: "rank:percentile",
-      payload: {
-        developerId:      String(developer._id),
-        scoredSnapshotId: String(saved._id),
-        cohortLabel:      result.layers.l4.cohortLabel,
-      },
-    },
-    2   // lower priority — percentile needs the full collection to be meaningful
   );
 
   // ── 8. Return job result ────────────────────────────────────
