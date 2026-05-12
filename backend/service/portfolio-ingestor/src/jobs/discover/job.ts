@@ -1,4 +1,4 @@
-import { PortfolioModel } from "../../db/models/index.js";
+import { PortfolioModel } from "../../db/models/portfolio.model.js";
 import { jobQueue, type JobHandler } from "../queue.js";
 import { normalizeSource } from "../../lib/normalizeSource.js";
 

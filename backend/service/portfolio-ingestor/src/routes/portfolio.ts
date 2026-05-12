@@ -1,6 +1,6 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
-import { PortfolioModel } from "../db/models/index.js";
+import { PortfolioModel } from "../db/models/portfolio.model.js";
 import { jobQueue } from "../jobs/queue.js";
 import { normalizeSource } from "../lib/normalizeSource.js";
 
