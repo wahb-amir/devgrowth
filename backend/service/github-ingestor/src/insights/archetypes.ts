@@ -110,8 +110,11 @@ export function classifyArchetype(input: ArchetypeInput): ArchetypeResult {
     return {
       archetype: "high_volume_low_signal",
       title: "High-volume, low-signal contributor",
+      // Description is identity-level only. The tension card in engine.ts
+      // explains the mechanism (why impact is low). Keeping both high-level
+      // prevents the headline and tension from opening with the same sentence.
       description:
-        "Commit volume is substantial but ecosystem impact and visibility remain limited, indicating work concentrated in private or low-traction repositories.",
+        "A profile with active commit history but limited ecosystem traction across impact and reach dimensions.",
     };
   }
 

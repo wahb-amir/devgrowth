@@ -12,7 +12,7 @@
  *   4. Fully deterministic and rule-based.
  */
 
-import type { InsightCard } from "../db/models/insight.model.js";
+import { InsightCard } from "../db/models/insight.model.js";
 import { classifyArchetype } from "./archetypes.js";
 import type { Archetype } from "./archetypes.js";
 import {
@@ -83,7 +83,7 @@ function collaborationRatio(p: number, pr: number, i: number): number {
 
 function confidenceTier(
   recent: number,
-  previous: number
+  previous: number,
 ): "high" | "medium" | "low" {
   const total = recent + previous;
   if (total >= 6 && recent >= 3) return "high";
@@ -91,9 +91,7 @@ function confidenceTier(
   return "low";
 }
 
-function makeCard(
-  fields: Omit<InsightCard, never>
-): InsightCard {
+function makeCard(fields: Omit<InsightCard, never>): InsightCard {
   return fields as InsightCard;
 }
 
@@ -103,7 +101,7 @@ function buildHeadlineCard(
   archetypeTitle: string,
   archetypeDescription: string,
   trend: TrendLabel,
-  band: ScoreBand
+  band: ScoreBand,
 ): CardCandidate {
   // Tone of the trailing trend clause is gated by band
   let trendClause: string;
@@ -121,8 +119,8 @@ function buildHeadlineCard(
     trend === "improving" && isAllowed(band, "positive_trajectory")
       ? "milestone"
       : trend === "declining"
-      ? "watch_area"
-      : "neutral";
+        ? "watch_area"
+        : "neutral";
 
   return {
     card: makeCard({
@@ -134,7 +132,17 @@ function buildHeadlineCard(
       triggerTags: ["headline", `band:${band}`, `trend:${trend}`],
       priority: 100,
     }),
-    concepts: ["trajectory_positive", "trajectory_negative", "trajectory_mixed"],
+    // Trajectory keys: blocks any trajectory card from duplicating the headline's directional framing.
+    // overall_score_low: for low/average bands the headline already communicates weakness,
+    // so a generic "overall score is low" watch area would be redundant — block it here.
+    concepts: [
+      "trajectory_positive",
+      "trajectory_negative",
+      "trajectory_mixed",
+      ...(band === "low" || band === "average"
+        ? ["overall_score_low" as ConceptKey]
+        : []),
+    ],
   };
 }
 
@@ -148,20 +156,29 @@ type StrengthCandidate = {
 
 function detectBestStrength(
   input: EngineInput,
-  band: ScoreBand
+  band: ScoreBand,
 ): StrengthCandidate | null {
   const {
-    activityScore, impactScore, consistencyScore, reachScore,
-    pushes, prs, issues, activityTrend, impactTrend, repos, stars,
+    activityScore,
+    impactScore,
+    consistencyScore,
+    reachScore,
+    pushes,
+    prs,
+    issues,
+    activityTrend,
+    impactTrend,
+    repos,
+    stars,
   } = input;
 
   const collab = collaborationRatio(pushes, prs, issues);
 
   // For low band the strength bar is lower — acknowledge the relative best signal
   const activityThreshold = band === "low" ? 45 : 65;
-  const impactThreshold   = band === "low" ? 35 : 60;
-  const consisThreshold   = band === "low" ? 40 : 60;
-  const reachThreshold    = band === "low" ? 30 : 55;
+  const impactThreshold = band === "low" ? 35 : 60;
+  const consisThreshold = band === "low" ? 40 : 60;
+  const reachThreshold = band === "low" ? 30 : 55;
 
   const candidates: StrengthCandidate[] = [];
 
@@ -171,8 +188,8 @@ function detectBestStrength(
       band === "low"
         ? "Activity is the strongest available signal in this profile."
         : isAllowed(band, "strong_strength_claim") && vol > 100
-        ? `Contribution velocity is a standout signal, with over ${vol} tracked events in the recent window.`
-        : "Contribution velocity is above the threshold for consistent engagement.";
+          ? `Contribution velocity is a standout signal, with over ${vol} tracked events in the recent window.`
+          : "Contribution velocity is above the threshold for consistent engagement.";
     candidates.push({
       conceptKey: "activity_positive",
       score: activityScore,
@@ -185,8 +202,8 @@ function detectBestStrength(
       band === "low"
         ? "Impact is the relatively strongest signal in this profile, though still below average overall."
         : stars >= 5
-        ? "Repository engagement signals indicate meaningful visibility within the ecosystem."
-        : "Contributions are generating above-average downstream engagement relative to activity volume.";
+          ? "Repository engagement signals indicate meaningful visibility within the ecosystem."
+          : "Contributions are generating above-average downstream engagement relative to activity volume.";
     candidates.push({
       conceptKey: "impact_positive",
       score: impactScore,
@@ -211,8 +228,8 @@ function detectBestStrength(
       band === "low"
         ? "Reach is developing, though still limited in absolute terms."
         : repos >= 10
-        ? `Active presence across ${repos} repositories contributes to a growing public footprint.`
-        : "Follower and repository engagement indicate rising public recognition.";
+          ? `Active presence across ${repos} repositories contributes to a growing public footprint.`
+          : "Follower and repository engagement indicate rising public recognition.";
     candidates.push({
       conceptKey: "reach_positive",
       score: reachScore,
@@ -226,9 +243,7 @@ function detectBestStrength(
   return candidates.sort((a, b) => b.score - a.score)[0];
 }
 
-function buildStrengthCard(
-  s: StrengthCandidate
-): CardCandidate {
+function buildStrengthCard(s: StrengthCandidate): CardCandidate {
   return {
     card: makeCard({
       type: "strength",
@@ -253,11 +268,20 @@ type TensionCandidate = {
 
 function detectBestTension(
   input: EngineInput,
-  band: ScoreBand
+  band: ScoreBand,
 ): TensionCandidate | null {
   const {
-    activityScore, impactScore, consistencyScore, reachScore,
-    activityTrend, impactTrend, reachTrend, stars, pushes, prs, issues,
+    activityScore,
+    impactScore,
+    consistencyScore,
+    reachScore,
+    activityTrend,
+    impactTrend,
+    reachTrend,
+    stars,
+    pushes,
+    prs,
+    issues,
   } = input;
 
   const tensions: TensionCandidate[] = [];
@@ -270,10 +294,10 @@ function detectBestTension(
       severity: activityScore >= 55 ? "high" : "medium",
       body:
         band === "low"
-          ? "Contribution volume exists but is not yet generating ecosystem impact. " +
-            "Most activity appears concentrated in private or low-visibility repositories."
+          ? "Contribution activity is not converting into ecosystem impact. " +
+            "Commit frequency is the dominant signal, but downstream engagement has not followed."
           : "Contribution volume is not translating into ecosystem impact. " +
-            "Activity is concentrated in areas that do not generate stars, forks, or downstream engagement.",
+            "Activity volume is not generating downstream engagement at a proportional rate.",
     });
   }
 
@@ -340,7 +364,7 @@ function detectBestTension(
 
   // Prefer high severity; within same severity, first in list wins
   return tensions.sort((a, b) =>
-    a.severity === b.severity ? 0 : a.severity === "high" ? -1 : 1
+    a.severity === b.severity ? 0 : a.severity === "high" ? -1 : 1,
   )[0];
 }
 
@@ -364,11 +388,16 @@ function buildTensionCard(t: TensionCandidate): CardCandidate {
 function buildTrajectoryCard(
   input: EngineInput,
   trend: TrendLabel,
-  band: ScoreBand
+  band: ScoreBand,
 ): CardCandidate | null {
   const {
-    activityTrend, impactTrend, consistencyTrend, reachTrend,
-    activityScore, impactScore, totalScore,
+    activityTrend,
+    impactTrend,
+    consistencyTrend,
+    reachTrend,
+    activityScore,
+    impactScore,
+    totalScore,
   } = input;
 
   // Suppress for flat profiles — nothing new to say
@@ -389,15 +418,15 @@ function buildTrajectoryCard(
     impactTrend > activityTrend && impactTrend > consistencyTrend
       ? "impact"
       : activityTrend > consistencyTrend
-      ? "activity"
-      : "consistency";
+        ? "activity"
+        : "consistency";
 
   const lagDim =
     reachTrend < impactTrend && reachTrend < activityTrend
       ? "reach"
       : impactScore < activityScore - 20
-      ? "impact"
-      : null;
+        ? "impact"
+        : null;
 
   let body: string;
 
@@ -426,8 +455,8 @@ function buildTrajectoryCard(
     trend === "improving"
       ? "trajectory_positive"
       : trend === "declining"
-      ? "trajectory_negative"
-      : "trajectory_mixed";
+        ? "trajectory_negative"
+        : "trajectory_mixed";
 
   return {
     card: makeCard({
@@ -448,20 +477,28 @@ function buildTrajectoryCard(
 function buildConfidenceCard(
   input: EngineInput,
   tier: "high" | "medium" | "low",
-  band: ScoreBand
+  band: ScoreBand,
 ): CardCandidate | null {
   // Only emit when confidence is not high — no value in stating the obvious
   if (tier === "high") return null;
 
   const total = input.recentSnapshotCount + input.previousSnapshotCount;
 
-  const body =
-    tier === "low"
-      ? `Analysis is based on ${total} snapshot${total === 1 ? "" : "s"}. ` +
-        "Trend and trajectory claims should be treated as provisional. " +
-        "Confidence will improve as more data accumulates."
-      : `Profile history covers ${total} snapshots. ` +
-        "Directional signals are reasonably reliable, though score volatility may not yet be fully captured.";
+  let body: string;
+  if (tier === "low") {
+    body =
+      band === "low" || band === "average"
+        ? // For low/average profiles trajectory is suppressed, so don't qualify "trajectory claims"
+          `Analysis is based on ${total} snapshot${total === 1 ? "" : "s"}. ` +
+          "Signal readings reflect a limited observation window and may not represent sustained patterns."
+        : `Analysis is based on ${total} snapshot${total === 1 ? "" : "s"}. ` +
+          "Trend and trajectory claims should be treated as provisional. " +
+          "Confidence will improve as more data accumulates.";
+  } else {
+    body =
+      `Profile history covers ${total} snapshots. ` +
+      "Directional signals are reasonably reliable, though score volatility may not yet be fully captured.";
+  }
 
   return {
     card: makeCard({
@@ -484,47 +521,62 @@ type WatchCandidate = {
   body: string;
 };
 
-function detectBestWatchArea(
+/**
+ * Returns ALL watch area candidates in specificity order (most specific first).
+ * Each candidate includes "watch_area_slot" so the ConceptRegistry ensures
+ * at most one watch area card is ever admitted — the first one that clears
+ * dedup claims the slot and blocks the rest.
+ *
+ * The generic "low total score" entry comes last intentionally: for low/average
+ * band profiles the headline already claims "overall_score_low", which blocks it.
+ * For strong/elite profiles it never fires (totalScore >= 55). So the slot is
+ * always used by a more specific signal when one exists.
+ */
+function detectWatchAreas(
   input: EngineInput,
-  band: ScoreBand
-): WatchCandidate | null {
+  band: ScoreBand,
+): WatchCandidate[] {
   const {
-    activityScore, impactScore, consistencyScore, reachScore,
-    activityTrend, consistencyTrend, totalScore, pushes, prs, issues,
+    activityScore,
+    impactScore,
+    consistencyScore,
+    reachScore,
+    activityTrend,
+    consistencyTrend,
+    totalScore,
+    pushes,
+    prs,
+    issues,
   } = input;
 
   const collab = collaborationRatio(pushes, prs, issues);
   const candidates: WatchCandidate[] = [];
 
-  if (totalScore < 30) {
-    candidates.push({
-      conceptKeys: ["low_total_score"],
-      body:
-        "Overall score is in the lower tier. " +
-        "Sustained progress across activity, impact, and consistency is needed before this profile signals meaningful ecosystem presence.",
-    });
-  }
+  // Specific signals first — these carry more diagnostic value
 
   if (reachScore < 25) {
     candidates.push({
-      conceptKeys: ["reach_negative", "reach_weak_vs_reach_score"],
+      conceptKeys: [
+        "reach_negative",
+        "reach_weak_vs_reach_score",
+        "watch_area_slot",
+      ],
       body:
-        "Ecosystem reach is minimal. Follower count, repository stars, and forks are all low — " +
-        "the public footprint has not yet established itself.",
+        "Ecosystem reach is minimal. Follower count and public network presence are low, " +
+        "indicating the profile has not yet established a visible footprint in the ecosystem.",
     });
   }
 
   if (consistencyTrend < -0.08) {
     candidates.push({
-      conceptKeys: ["consistency_negative"],
-      body:
-        "Contribution regularity is deteriorating. Cadence gaps are widening compared to the prior period.",
+      conceptKeys: ["consistency_negative", "watch_area_slot"],
+      body: "Contribution regularity is deteriorating. Cadence gaps are widening compared to the prior period.",
     });
   }
 
   if (activityTrend < -0.08 && activityScore < 50) {
     candidates.push({
-      conceptKeys: ["activity_negative"],
+      conceptKeys: ["activity_negative", "watch_area_slot"],
       body:
         "Activity is falling from an already moderate baseline. " +
         "Without a reversal, overall score momentum will stall.",
@@ -533,14 +585,26 @@ function detectBestWatchArea(
 
   if (collab < 5 && impactScore < 35) {
     candidates.push({
-      conceptKeys: ["collaboration_low"],
+      conceptKeys: ["collaboration_low", "watch_area_slot"],
       body:
         "Minimal PR and issue activity means the profile generates almost no collaborative signal, " +
         "which limits both impact and reach.",
     });
   }
 
-  return candidates[0] ?? null;
+  // Generic score-level catch-all — last resort.
+  // For low/average profiles the headline already claims "overall_score_low",
+  // so this is blocked by dedup. For strong/elite this threshold never fires.
+  if (totalScore < 30) {
+    candidates.push({
+      conceptKeys: ["low_total_score", "overall_score_low", "watch_area_slot"],
+      body:
+        "Overall score is in the lower tier. " +
+        "Sustained progress across activity, impact, and consistency is needed before this profile signals meaningful ecosystem presence.",
+    });
+  }
+
+  return candidates;
 }
 
 function buildWatchAreaCard(w: WatchCandidate): CardCandidate {
@@ -551,7 +615,11 @@ function buildWatchAreaCard(w: WatchCandidate): CardCandidate {
       title: "Watch area",
       body: w.body,
       relatedSubScore: "overall",
-      triggerTags: ["watch_area", ...w.conceptKeys],
+      // Exclude watch_area_slot from triggerTags — it's an internal dedup key
+      triggerTags: [
+        "watch_area",
+        ...w.conceptKeys.filter((k) => k !== "watch_area_slot"),
+      ],
       priority: 55,
     }),
     concepts: w.conceptKeys,
@@ -562,7 +630,7 @@ function buildWatchAreaCard(w: WatchCandidate): CardCandidate {
 
 function deriveKeySignals(
   strengthBody: string | null,
-  tensionBody: string | null
+  tensionBody: string | null,
 ): string[] {
   const signals: string[] = [];
   if (strengthBody) signals.push(strengthBody.split(".")[0]);
@@ -570,9 +638,13 @@ function deriveKeySignals(
   return signals.slice(0, 3);
 }
 
-function deriveWarnings(watchBody: string | null): string[] {
-  if (!watchBody) return [];
-  return [watchBody.split(".")[0]];
+/** Derives warnings from the watch area card that was actually admitted, not the full candidate list. */
+function deriveWarnings(admittedCards: InsightCard[]): string[] {
+  const watchCard = admittedCards.find((c) =>
+    c.triggerTags?.includes("watch_area"),
+  );
+  if (!watchCard) return [];
+  return [watchCard.body.split(".")[0]];
 }
 
 // ─── Main entry point ──────────────────────────────────────────────────────────
@@ -581,7 +653,7 @@ export function runNarrativeEngine(input: EngineInput): NarrativeResult {
   const band = classifyScoreBand(input.totalScore);
   const confidence = confidenceTier(
     input.recentSnapshotCount,
-    input.previousSnapshotCount
+    input.previousSnapshotCount,
   );
   const trend = trendLabel(input.overallTrendScore);
   const registry = new ConceptRegistry();
@@ -612,7 +684,7 @@ export function runNarrativeEngine(input: EngineInput): NarrativeResult {
     archetypeResult.title,
     input.activityScore,
     input.impactScore,
-    input.consistencyScore
+    input.consistencyScore,
   );
 
   // ── Candidate pool ─────────────────────────────────────────────────────────
@@ -626,7 +698,7 @@ export function runNarrativeEngine(input: EngineInput): NarrativeResult {
     displayTitle,
     archetypeResult.description,
     trend,
-    band
+    band,
   );
   // Headline pre-claims trajectory keys so no trajectory card can duplicate the framing
   candidates.push(headlineCandidate);
@@ -658,17 +730,19 @@ export function runNarrativeEngine(input: EngineInput): NarrativeResult {
     candidates.push(confidenceCandidate);
   }
 
-  // 6. Watch area
-  const watchCandidate = detectBestWatchArea(input, band);
-  if (watchCandidate) {
-    candidates.push(buildWatchAreaCard(watchCandidate));
+  // 6. Watch areas — all candidates enter the pool.
+  //    "watch_area_slot" in each candidate's concepts ensures only the first
+  //    non-redundant one is admitted. Ordered by specificity in detectWatchAreas.
+  const watchCandidates = detectWatchAreas(input, band);
+  for (const w of watchCandidates) {
+    candidates.push(buildWatchAreaCard(w));
   }
 
   // ── Admission loop ─────────────────────────────────────────────────────────
   // Walk candidates in priority order, admitting each only if its concept
   // keys are still unclaimed.
   const sorted = candidates.sort(
-    (a, b) => (b.card.priority ?? 0) - (a.card.priority ?? 0)
+    (a, b) => (b.card.priority ?? 0) - (a.card.priority ?? 0),
   );
 
   const admitted: InsightCard[] = [];
@@ -680,8 +754,7 @@ export function runNarrativeEngine(input: EngineInput): NarrativeResult {
     }
   }
 
-  // Guarantee minimum of 3: if we somehow only got 1–2, admit remaining
-  // candidates regardless of dedup (this is a safety valve, not normal path)
+  // Guarantee minimum of 3: safety valve for edge cases with very sparse data
   if (admitted.length < 3) {
     for (const c of sorted) {
       if (admitted.length >= 3) break;
@@ -692,7 +765,6 @@ export function runNarrativeEngine(input: EngineInput): NarrativeResult {
   // ── Outputs ────────────────────────────────────────────────────────────────
   const strengthBody = strengthCandidate?.body ?? null;
   const tensionBody = tensionCandidate?.body ?? null;
-  const watchBody = watchCandidate?.body ?? null;
 
   return {
     archetype: archetypeResult.archetype,
@@ -701,6 +773,6 @@ export function runNarrativeEngine(input: EngineInput): NarrativeResult {
     scoreBand: band,
     cards: admitted,
     keySignals: deriveKeySignals(strengthBody, tensionBody),
-    warnings: deriveWarnings(watchBody),
+    warnings: deriveWarnings(admitted),
   };
 }
