@@ -307,7 +307,7 @@ export const ingestPortfolio: JobHandler = async (job) => {
     );
 
     await jobQueue.enqueue({
-      name: "parse:portfolio",
+      name: "parse:portfolio:collect",
       payload: {
         url: normalizedUrl,
         sourceUrl,
