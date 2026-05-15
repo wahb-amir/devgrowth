@@ -184,7 +184,7 @@ export const discoverPortfolio: JobHandler = async (job) => {
           hostname,
           priority: source === "manual" ? 10 : 5,
         },
-       },
+      },
       {
         developerId: normalizedUrl, 
         source: source || "discovery"

@@ -15,7 +15,7 @@ export interface Job {
 }
 
 export interface JobWithDetails extends Job {
-  steps: import('../steps/steps.types').JobStep[];
-  events?: import('../events/events.types').JobEvent[];
+  steps: import("../steps/steps.types").JobStep[];
+  events?: import("../events/events.types").JobEvent[];
   eventsMeta?: { total: number; limit: number; offset: number };
 }
