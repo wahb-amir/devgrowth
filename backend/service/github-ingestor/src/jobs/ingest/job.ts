@@ -293,8 +293,7 @@ export const ingestDev: JobHandler = async (job) => {
       },
       {
         developerId: locked._id,
-        source: "ingest",
-        metadata: { username: normalized },
+        source: "ingest"
       },
     );
 

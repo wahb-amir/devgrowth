@@ -113,8 +113,7 @@ export async function developerRoutes(fastify: FastifyInstance) {
         },
         {
           developerId: username,
-          source: "search",
-          metadata: { username, source: "search" },
+          source: "search"
         },
       );
 

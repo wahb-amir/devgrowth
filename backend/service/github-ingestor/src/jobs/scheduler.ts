@@ -52,8 +52,7 @@ export function registerScheduledJobs() {
           },
           {
             developerId: String(dev._id),
-            source: "scheduled",
-            metadata: { username: dev.username },
+            source: "scheduled"
           },
         );
       }
