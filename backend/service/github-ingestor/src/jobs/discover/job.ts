@@ -1,5 +1,6 @@
 import { DeveloperModel } from "../../db/models/developer.model.js";
 import { jobQueue, JobHandler } from "../queue.js";
+import { enqueueTracked } from "../TrackedEnqueue.js";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const GITHUB_API_BASE = "https://api.github.com";
@@ -237,14 +238,21 @@ export const discoverDev: JobHandler = async (job) => {
 
     /* ---------------- QUEUE INGEST ---------------- */
 
-    await jobQueue.enqueue({
-      name: "ingest:developer",
-      payload: {
-        username: normalizedUsername,
-        profile,
-        priority: source === "manual" ? 10 : 5,
+    enqueueTracked(
+      {
+        name: "ingest:developer",
+        payload: {
+          username: normalizedUsername,
+          profile,
+          priority: source === "manual" ? 10 : 5,
+        },
+        metadata: { username: normalizedUsername, source: "discovery" },
       },
-    });
+      {
+        developerId: profile.id.toString(),
+        source: source || "discovery",
+      },
+    );
 
     return {
       success: true,

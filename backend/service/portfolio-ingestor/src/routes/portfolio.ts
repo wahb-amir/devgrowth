@@ -3,6 +3,7 @@ import { z } from "zod";
 import { PortfolioModel } from "../db/models/portfolio.model.js";
 import { jobQueue } from "../jobs/queue.js";
 import { normalizeSource } from "../lib/normalizeSource.js";
+import { enqueueTracked } from "../jobs/TrackedEnqueue.js";
 
 export type Portfolio = {
   sourceUrl: string;
@@ -147,15 +148,21 @@ export async function portfolioRoutes(fastify: FastifyInstance) {
       }
 
       /* ---------------- 3. ENQUEUE JOB ---------------- */
-      jobQueue.enqueue({
-        name: "discover:portfolio",
-        payload: {
-          url: normalizedUrl,
-          sourceUrl,
-          hostname,
-          source: normalizeSource("user"),
+      enqueueTracked(
+        {
+          name: "discover:portfolio",
+          payload: {
+            url: normalizedUrl,
+            sourceUrl,
+            hostname,
+            source: normalizeSource("user"),
+          },
         },
-      });
+        {
+          developerId: "unknown",
+          source: "portfolio",
+        },
+      );
 
       return reply.status(202).send({
         status: "queued",
