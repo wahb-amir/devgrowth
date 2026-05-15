@@ -1,0 +1,52 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Job {
+  job_id       String     @id
+  developer_id String
+  source       String
+  status       String     @default("queued")
+  current_step String?
+  created_at   DateTime   @default(now())
+  updated_at   DateTime   @updatedAt
+
+  steps  JobStep[]
+  events JobEvent[]
+
+  @@map("jobs")
+}
+
+model JobStep {
+  id         Int       @id @default(autoincrement())
+  job_id     String
+  step_name  String
+  status     String    @default("pending")
+  attempt    Int       @default(1)
+  started_at DateTime?
+  ended_at   DateTime?
+  error      String?
+  created_at DateTime  @default(now())
+
+  job Job @relation(fields: [job_id], references: [job_id], onDelete: Cascade)
+
+  @@map("job_steps")
+}
+
+model JobEvent {
+  id         Int      @id @default(autoincrement())
+  job_id     String
+  event_type String
+  step_name  String?
+  payload    Json?
+  created_at DateTime @default(now())
+
+  job Job @relation(fields: [job_id], references: [job_id], onDelete: Cascade)
+
+  @@map("job_events")
+}
