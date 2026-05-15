@@ -90,7 +90,7 @@ export function registerScheduledJobs() {
           {
             developerId: String(dev._id),
             source: "scheduled",
-          }
+          },
         );
       }
     } catch (err) {

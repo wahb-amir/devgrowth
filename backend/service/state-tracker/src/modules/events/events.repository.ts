@@ -1,5 +1,5 @@
-import prisma from '../../config/db';
-import { CreateEventInput, GetEventsOptions, JobEvent } from './events.types';
+import prisma from "../../config/db";
+import { CreateEventInput, GetEventsOptions, JobEvent } from "./events.types";
 
 export const eventsRepository = {
   async append(input: CreateEventInput): Promise<JobEvent> {
@@ -15,12 +15,12 @@ export const eventsRepository = {
 
   async findByJobId(
     jobId: string,
-    options: GetEventsOptions = {}
+    options: GetEventsOptions = {},
   ): Promise<JobEvent[]> {
     const { limit = 100, offset = 0 } = options;
     return prisma.jobEvent.findMany({
       where: { job_id: jobId },
-      orderBy: { created_at: 'asc' },
+      orderBy: { created_at: "asc" },
       take: limit,
       skip: offset,
     });

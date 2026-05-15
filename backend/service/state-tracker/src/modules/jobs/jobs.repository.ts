@@ -1,6 +1,6 @@
-import prisma from '../../config/db';
-import { CreateJobInput, Job } from './jobs.types';
-import { JobStatus } from '../../shared/enums';
+import prisma from "../../config/db";
+import { CreateJobInput, Job } from "./jobs.types";
+import { JobStatus } from "../../shared/enums";
 
 export const jobsRepository = {
   async create(input: CreateJobInput): Promise<Job> {
@@ -21,7 +21,7 @@ export const jobsRepository = {
   async updateStatus(
     jobId: string,
     status: JobStatus,
-    currentStep?: string | null
+    currentStep?: string | null,
   ): Promise<Job> {
     return prisma.job.update({
       where: { job_id: jobId },

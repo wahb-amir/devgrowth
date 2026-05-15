@@ -1,4 +1,4 @@
-import { EventType } from '../../shared/enums';
+import { EventType } from "../../shared/enums";
 
 export interface CreateEventInput {
   job_id: string;

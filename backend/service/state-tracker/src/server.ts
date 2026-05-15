@@ -1,8 +1,8 @@
-import { buildApp } from './app';
-import prisma from './config/db';
+import { buildApp } from "./app";
+import prisma from "./config/db";
 
-const PORT = parseInt(process.env.PORT ?? '3000', 10);
-const HOST = process.env.HOST ?? '0.0.0.0';
+const PORT = parseInt(process.env.PORT ?? "3000", 10);
+const HOST = process.env.HOST ?? "0.0.0.0";
 
 async function main() {
   const app = buildApp();
@@ -10,7 +10,7 @@ async function main() {
   try {
     // Verify DB connection on startup
     await prisma.$connect();
-    app.log.info('Database connected');
+    app.log.info("Database connected");
 
     await app.listen({ port: PORT, host: HOST });
     app.log.info(`State Tracker running on http://${HOST}:${PORT}`);
@@ -27,8 +27,8 @@ async function main() {
     process.exit(0);
   };
 
-  process.on('SIGINT', () => shutdown('SIGINT'));
-  process.on('SIGTERM', () => shutdown('SIGTERM'));
+  process.on("SIGINT", () => shutdown("SIGINT"));
+  process.on("SIGTERM", () => shutdown("SIGTERM"));
 }
 
 main();

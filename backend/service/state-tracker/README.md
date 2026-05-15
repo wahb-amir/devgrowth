@@ -35,6 +35,7 @@ npm run dev
 ## API Reference
 
 ### Create Job
+
 ```
 POST /jobs
 { "job_id": "uuid", "developer_id": "123", "source": "github" }
@@ -42,12 +43,14 @@ POST /jobs
 ```
 
 ### Start Job
+
 ```
 POST /jobs/:jobId/start
 → 200 { job }
 ```
 
 ### Start Step
+
 ```
 POST /jobs/:jobId/step/start
 { "step": "fetch_profile" }
@@ -55,6 +58,7 @@ POST /jobs/:jobId/step/start
 ```
 
 ### Complete Step
+
 ```
 POST /jobs/:jobId/step/complete
 { "step": "fetch_profile", "payload": {} }
@@ -62,6 +66,7 @@ POST /jobs/:jobId/step/complete
 ```
 
 ### Fail Step
+
 ```
 POST /jobs/:jobId/step/fail
 { "step": "normalize_profile", "error": "rate limit exceeded" }
@@ -69,12 +74,14 @@ POST /jobs/:jobId/step/fail
 ```
 
 ### Get Job State
+
 ```
 GET /jobs/:jobId?includeEvents=true&eventsLimit=50&eventsOffset=0
 → 200 { job_id, status, steps[], events[], eventsMeta }
 ```
 
 ### Health Check
+
 ```
 GET /health
 → 200 { status: "ok" }
@@ -82,13 +89,13 @@ GET /health
 
 ## Design Principles
 
-| Rule | Behavior |
-|------|----------|
-| Append-only events | `job_events` rows are never updated or deleted |
-| Mutable snapshot | `jobs` table status/current_step can be updated |
-| Idempotency | Duplicate step events create a new attempt row, not an error |
-| Non-blocking | Event append failures are caught and logged — never thrown |
-| No service awareness | Zero knowledge of GitHub/Portfolio/Orchestrator logic |
+| Rule                 | Behavior                                                     |
+| -------------------- | ------------------------------------------------------------ |
+| Append-only events   | `job_events` rows are never updated or deleted               |
+| Mutable snapshot     | `jobs` table status/current_step can be updated              |
+| Idempotency          | Duplicate step events create a new attempt row, not an error |
+| Non-blocking         | Event append failures are caught and logged — never thrown   |
+| No service awareness | Zero knowledge of GitHub/Portfolio/Orchestrator logic        |
 
 ## Folder Structure
 

@@ -1,5 +1,5 @@
-import { eventsRepository } from './events.repository';
-import { CreateEventInput, GetEventsOptions, JobEvent } from './events.types';
+import { eventsRepository } from "./events.repository";
+import { CreateEventInput, GetEventsOptions, JobEvent } from "./events.types";
 
 export const eventsService = {
   /**
@@ -11,7 +11,7 @@ export const eventsService = {
 
   async getByJobId(
     jobId: string,
-    options?: GetEventsOptions
+    options?: GetEventsOptions,
   ): Promise<{ events: JobEvent[]; total: number }> {
     const [events, total] = await Promise.all([
       eventsRepository.findByJobId(jobId, options),

@@ -184,13 +184,13 @@ export const discoverPortfolio: JobHandler = async (job) => {
           hostname,
           priority: source === "manual" ? 10 : 5,
         },
-       },
+      },
       {
-        developerId: normalizedUrl, 
+        developerId: normalizedUrl,
         source: source || "discovery",
         metadata: { url: normalizedUrl, source: source || "discovery" },
-       },
-     );
+      },
+    );
 
     return {
       success: true,
