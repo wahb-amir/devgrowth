@@ -119,43 +119,85 @@ devgrowth/
 │       │   │   │   └── types.ts
 │       │   │   └── server.ts
 │       │   └── tsconfig.json
-│       └── portfolio-ingestor
+│       ├── orchestrator
+│       ├── portfolio-ingestor
+│       │   ├── package.json
+│       │   ├── pnpm-lock.yaml
+│       │   ├── pnpm-workspace.yaml
+│       │   ├── src
+│       │   │   ├── db
+│       │   │   │   ├── connection.ts
+│       │   │   │   └── models
+│       │   │   │       └── portfolio.model.ts
+│       │   │   ├── jobs
+│       │   │   │   ├── discover
+│       │   │   │   │   └── job.ts
+│       │   │   │   ├── ingest
+│       │   │   │   │   └── job.ts
+│       │   │   │   ├── portfolio
+│       │   │   │   │   ├── cleaner.ts
+│       │   │   │   │   ├── collect.job.ts
+│       │   │   │   │   ├── crawler.ts
+│       │   │   │   │   ├── enricher.ts
+│       │   │   │   │   ├── extractor.ts
+│       │   │   │   │   ├── fetcher.ts
+│       │   │   │   │   ├── merger.ts
+│       │   │   │   │   ├── parser.ts
+│       │   │   │   │   ├── rendered.job.ts
+│       │   │   │   │   ├── security.ts
+│       │   │   │   │   ├── skills-dictionary.ts
+│       │   │   │   │   ├── store.job.ts
+│       │   │   │   │   └── types.ts
+│       │   │   │   └── queue.ts
+│       │   │   ├── lib
+│       │   │   │   ├── config.ts
+│       │   │   │   └── normalizeSource.ts
+│       │   │   ├── main.ts
+│       │   │   ├── routes
+│       │   │   │   ├── health.ts
+│       │   │   │   └── portfolio.ts
+│       │   │   └── server.ts
+│       │   └── tsconfig.json
+│       └── state-tracker
 │           ├── package.json
+│           ├── package-lock.json
 │           ├── pnpm-lock.yaml
 │           ├── pnpm-workspace.yaml
+│           ├── prisma
+│           │   ├── migrations
+│           │   │   ├── 20260515153117_inital_setup
+│           │   │   │   └── migration.sql
+│           │   │   └── migration_lock.toml
+│           │   └── schema.prisma
+│           ├── README.md
+│           ├── schema.prisma:7
 │           ├── src
-│           │   ├── db
-│           │   │   ├── connection.ts
-│           │   │   └── models
-│           │   │       └── portfolio.model.ts
-│           │   ├── jobs
-│           │   │   ├── discover
-│           │   │   │   └── job.ts
-│           │   │   ├── ingest
-│           │   │   │   └── job.ts
-│           │   │   ├── portfolio
-│           │   │   │   ├── cleaner.ts
-│           │   │   │   ├── collect.job.ts
-│           │   │   │   ├── crawler.ts
-│           │   │   │   ├── enricher.ts
-│           │   │   │   ├── extractor.ts
-│           │   │   │   ├── fetcher.ts
-│           │   │   │   ├── merger.ts
-│           │   │   │   ├── parser.ts
-│           │   │   │   ├── rendered.job.ts
-│           │   │   │   ├── security.ts
-│           │   │   │   ├── skills-dictionary.ts
-│           │   │   │   ├── store.job.ts
-│           │   │   │   └── types.ts
-│           │   │   └── queue.ts
-│           │   ├── lib
-│           │   │   ├── config.ts
-│           │   │   └── normalizeSource.ts
-│           │   ├── main.ts
-│           │   ├── routes
-│           │   │   ├── health.ts
-│           │   │   └── portfolio.ts
-│           │   └── server.ts
+│           │   ├── app.ts
+│           │   ├── config
+│           │   │   └── db.ts
+│           │   ├── middleware
+│           │   │   └── errorHandler.ts
+│           │   ├── modules
+│           │   │   ├── events
+│           │   │   │   ├── events.repository.ts
+│           │   │   │   ├── events.service.ts
+│           │   │   │   └── events.types.ts
+│           │   │   ├── jobs
+│           │   │   │   ├── jobs.controller.ts
+│           │   │   │   ├── jobs.repository.ts
+│           │   │   │   ├── jobs.service.ts
+│           │   │   │   └── jobs.types.ts
+│           │   │   └── steps
+│           │   │       ├── steps.repository.ts
+│           │   │       ├── steps.service.ts
+│           │   │       └── steps.types.ts
+│           │   ├── server.ts
+│           │   ├── shared
+│           │   │   ├── enums.ts
+│           │   │   ├── errors.ts
+│           │   │   └── utils.ts
+│           │   └── types
+│           │       └── global.d.ts
 │           └── tsconfig.json
 ├── LICENSE
 └── README.md
