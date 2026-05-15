@@ -1,13 +1,17 @@
-import { z } from 'zod';
+import { z } from "zod";
 
 const envSchema = z.object({
   PORT: z.coerce.number().default(4000),
-  HOST: z.string().default('0.0.0.0'),
-  NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),
-  LOG_LEVEL: z.enum(['trace', 'debug', 'info', 'warn', 'error', 'fatal']).default('info'),
-  MONGODB_URI: z.string().default('mongodb://localhost:27017'),
-  MONGODB_DB_NAME: z.string().default('portfolio-ingestor'),
-  CORS_ORIGIN: z.string().default('*'),
+  HOST: z.string().default("0.0.0.0"),
+  NODE_ENV: z
+    .enum(["development", "production", "test"])
+    .default("development"),
+  LOG_LEVEL: z
+    .enum(["trace", "debug", "info", "warn", "error", "fatal"])
+    .default("info"),
+  MONGODB_URI: z.string().default("mongodb://localhost:27017"),
+  MONGODB_DB_NAME: z.string().default("portfolio-ingestor"),
+  CORS_ORIGIN: z.string().default("*"),
 });
 
 export type Config = z.infer<typeof envSchema>;
@@ -20,9 +24,9 @@ export function loadConfig(): Config {
   const result = envSchema.safeParse(process.env);
 
   if (!result.success) {
-    console.error('❌ Invalid environment variables:');
+    console.error("❌ Invalid environment variables:");
     result.error.issues.forEach((issue) => {
-      console.error(`  ${issue.path.join('.')}: ${issue.message}`);
+      console.error(`  ${issue.path.join(".")}: ${issue.message}`);
     });
     process.exit(1);
   }
@@ -32,6 +36,6 @@ export function loadConfig(): Config {
 }
 
 export function getConfig(): Config {
-  if (!_config) throw new Error('Config not loaded. Call loadConfig() first.');
+  if (!_config) throw new Error("Config not loaded. Call loadConfig() first.");
   return _config;
 }

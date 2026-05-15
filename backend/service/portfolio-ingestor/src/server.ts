@@ -43,7 +43,6 @@ export async function buildServer() {
       message,
     });
   });
-  
 
   // Default 404
   fastify.setNotFoundHandler((_req, reply) => {

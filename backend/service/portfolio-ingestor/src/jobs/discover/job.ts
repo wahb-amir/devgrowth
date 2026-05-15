@@ -169,7 +169,7 @@ export const discoverPortfolio: JobHandler = async (job) => {
         ingestionStatus: "pending",
         failure: null,
         lastQueuedAt: new Date(),
-        source: normalizeSource(source)
+        source: normalizeSource(source),
       });
     }
 

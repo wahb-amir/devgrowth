@@ -1,5 +1,5 @@
 import { PortfolioModel } from "../../db/models/portfolio.model.js";
-import { type JobHandler ,jobQueue} from "../queue.js";
+import { type JobHandler, jobQueue } from "../queue.js";
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 type IngestPortfolioPayload = {
@@ -309,9 +309,9 @@ export const ingestPortfolio: JobHandler = async (job) => {
     await jobQueue.enqueue({
       name: "parse:portfolio:collect",
       payload: {
-        url: normalizedUrl,
-        sourceUrl,
-        hostname,
+        portfolioId:
+          existing?._id.toString() ||
+          (await PortfolioModel.findOne({ normalizedUrl }))._id.toString(),
       },
     });
 

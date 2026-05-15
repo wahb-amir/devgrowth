@@ -1,8 +1,4 @@
-export type PortfolioSource =
-  | "manual"
-  | "search"
-  | "import"
-  | "discovery";
+export type PortfolioSource = "manual" | "search" | "import" | "discovery";
 
 export function normalizeSource(source?: string): PortfolioSource {
   switch (source) {
