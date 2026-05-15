@@ -8,7 +8,7 @@ import { ingestDev } from "./jobs/ingest/job.js";
 import { jobQueue } from "./jobs/queue.js";
 import { scoreDevV3Full } from "./jobs/score/job.js";
 import { generateInsightsJob } from "./jobs/insights/job.js";
-
+import { registerTrackerHooks } from "./jobs/TrackedEnqueue.js";
 async function main() {
   // 1. Validate env vars — exits cleanly if anything is missing
   const config = loadConfig();
@@ -19,6 +19,9 @@ async function main() {
 
   // 3. Register job handlers (stubs for now — filled in during Phase 1–3)
   registerJobHandlers();
+
+  // 4. Register tracker hooks
+  registerTrackerHooks();
 
   // 4. Register cron-based scheduled jobs
   registerScheduledJobs();

@@ -4,8 +4,8 @@ import { loadConfig } from "./lib/config.js";
 import { buildServer } from "./server.js";
 import { connectDatabase } from "./db/connection.js";
 
-import { jobQueue } from "./jobs/queue.js";
-
+import { jobQueue } from "./jobs/queue.js"
+import { registerTrackerHooks } from "./jobs/TrackedEnqueue.js";
 import { discoverPortfolio } from "./jobs/discover/job.js";
 import { ingestPortfolio } from "./jobs/ingest/job.js";
 
@@ -70,8 +70,10 @@ function registerJobHandlers() {
 
   // layer 4 — parse: persist structured output
   jobQueue.register("parse:portfolio:store", parsePortfolioStore);
-
+  // Wire lifecycle hooks once at module load
+  registerTrackerHooks();
   console.info("✅ Job handlers registered.");
+
 }
 
 main().catch((err) => {

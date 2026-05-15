@@ -6,12 +6,9 @@ export type Job = {
 export type JobResult = {
   success: boolean;
   durationMs: number;
-
   error?: string;
-
   action?: string;
   username?: string;
-
   retryable?: boolean;
   statusCode?: number;
 };
@@ -28,11 +25,16 @@ type QueuedJob = {
   retryable?: boolean;
 };
 
+export type JobLifecycleHook = (jobId: string, jobName: string) => void;
+export type JobFailHook = (jobId: string, jobName: string, error: string) => void;
+
 export class SimpleJobQueue {
   private concurrency: number;
   private queue: QueuedJob[];
   private handlers: Map<string, JobHandler>;
   private isProcessing: boolean;
+  private onJobComplete?: JobLifecycleHook; 
+  private onJobFail?: JobFailHook;          
 
   constructor(concurrency = 2) {
     this.concurrency = concurrency;
@@ -44,6 +46,12 @@ export class SimpleJobQueue {
   register(jobName: string, handler: JobHandler): void {
     this.handlers.set(jobName, handler);
     console.info(`✅ Job handler registered: ${jobName}`);
+  }
+
+  // 👈
+  setLifecycleHooks(onComplete: JobLifecycleHook, onFail: JobFailHook): void {
+    this.onJobComplete = onComplete;
+    this.onJobFail = onFail;
   }
 
   enqueue(job: Job, maxAttempts = 3): string {
@@ -99,26 +107,25 @@ export class SimpleJobQueue {
               console.info(
                 `✅ Done: ${queued.job.name} [${queued.id}] in ${result.durationMs}ms`,
               );
+              this.onJobComplete?.(queued.id, queued.job.name); // 👈
               return;
             }
 
             // ❌ FAILURE (structured)
             queued.lastError =
               result.error ?? (result.success ? "ok" : "unknown_job_failure");
-
             queued.retryable = result.retryable ?? false;
 
             console.warn(
               `⚠️ Failed: ${queued.job.name} [${queued.id}]: ${result.error ?? "unknown"}`,
             );
 
+            this.onJobFail?.(queued.id, queued.job.name, queued.lastError); // 👈
             this.maybeRequeue(queued);
           } catch (err: any) {
             const durationMs = Date.now() - start;
-
             const errorMessage =
               err instanceof Error ? err.message : String(err);
-
             const retryable = err?.retryable ?? err?.status >= 500;
 
             queued.lastError = errorMessage;
@@ -128,6 +135,7 @@ export class SimpleJobQueue {
               `❌ Threw: ${queued.job.name} [${queued.id}] after ${durationMs}ms — ${errorMessage}`,
             );
 
+            this.onJobFail?.(queued.id, queued.job.name, errorMessage); // 👈
             this.maybeRequeue(queued);
           }
         }),
@@ -140,7 +148,6 @@ export class SimpleJobQueue {
   private maybeRequeue(queued: QueuedJob): void {
     const retryable = queued.retryable ?? false;
 
-    // ❌ NEVER retry permanent errors
     if (!retryable) {
       console.error(
         `💀 Dead letter (non-retryable): ${queued.job.name} [${queued.id}] — ${queued.lastError}`,
@@ -148,7 +155,6 @@ export class SimpleJobQueue {
       return;
     }
 
-    // ❌ max attempts reached
     if (queued.attempts >= queued.maxAttempts) {
       console.error(
         `💀 Dead letter (max retries): ${queued.job.name} [${queued.id}] — ${queued.lastError}`,
@@ -156,16 +162,12 @@ export class SimpleJobQueue {
       return;
     }
 
-    // ⏱ exponential backoff + jitter
     const base = Math.pow(2, queued.attempts) * 1000;
     const jitter = Math.random() * 300;
-
     const delay = base + jitter;
 
     console.info(
-      `🔁 Requeueing ${queued.job.name} [${queued.id}] in ${Math.round(
-        delay,
-      )}ms (attempt ${queued.attempts}/${queued.maxAttempts})`,
+      `🔁 Requeueing ${queued.job.name} [${queued.id}] in ${Math.round(delay)}ms (attempt ${queued.attempts}/${queued.maxAttempts})`,
     );
 
     setTimeout(() => {
@@ -175,7 +177,4 @@ export class SimpleJobQueue {
   }
 }
 
-/**
- * Singleton queue instance
- */
 export const jobQueue = new SimpleJobQueue(2);
