@@ -63,11 +63,11 @@ export const BANNED_PHRASES_BY_BAND: Record<ScoreBand, string[]> = {
 export function isAllowed(
   band: ScoreBand,
   capability:
-    | "positive_trajectory"     // upward trajectory language
-    | "rich_archetype"           // maintainer, ecosystem builder, etc.
-    | "growth_language"          // "accelerating", "compounding", "headroom"
-    | "strong_strength_claim"    // "standout", "dominant", "well above typical"
-    | "confident_trend_claim"    // "will", "points upward", "momentum holds"
+    | "positive_trajectory" // upward trajectory language
+    | "rich_archetype" // maintainer, ecosystem builder, etc.
+    | "growth_language" // "accelerating", "compounding", "headroom"
+    | "strong_strength_claim" // "standout", "dominant", "well above typical"
+    | "confident_trend_claim", // "will", "points upward", "momentum holds"
 ): boolean {
   switch (capability) {
     case "positive_trajectory":
@@ -92,7 +92,7 @@ export function getConstrainedArchetypeTitle(
   fullTitle: string,
   activityScore: number,
   impactScore: number,
-  consistencyScore: number
+  consistencyScore: number,
 ): string {
   if (band === "strong" || band === "elite") return fullTitle;
 

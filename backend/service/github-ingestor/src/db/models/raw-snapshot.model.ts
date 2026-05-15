@@ -11,7 +11,7 @@ const FetchStatsSchema = new Schema(
     requestsUsed: { type: Number, required: true },
     durationMs: { type: Number, required: true },
   },
-  { _id: false }
+  { _id: false },
 );
 
 /**
@@ -24,7 +24,7 @@ const ActivitySchema = new Schema(
     issues: { type: Number, default: 0 },
     releases: { type: Number, default: 0 },
   },
-  { _id: false }
+  { _id: false },
 );
 
 /**
@@ -37,7 +37,7 @@ const RepoStatsSchema = new Schema(
     totalForks: { type: Number, default: 0 },
     languages: { type: Map, of: Number, default: {} },
   },
-  { _id: false }
+  { _id: false },
 );
 
 const RawSnapshotSchema = new Schema(
@@ -101,7 +101,7 @@ const RawSnapshotSchema = new Schema(
         return obj;
       },
     },
-  }
+  },
 );
 
 /**
@@ -110,11 +110,10 @@ const RawSnapshotSchema = new Schema(
 RawSnapshotSchema.index({ developerId: 1, takenAt: -1 });
 RawSnapshotSchema.index(
   { takenAt: 1 },
-  { expireAfterSeconds: 60 * 60 * 24 * 180 } // 180 days retention
+  { expireAfterSeconds: 60 * 60 * 24 * 180 }, // 180 days retention
 );
 
 export type RawSnapshot = InferSchemaType<typeof RawSnapshotSchema>;
 
 export const RawSnapshotModel =
-  models.RawSnapshot ??
-  model<RawSnapshot>("RawSnapshot", RawSnapshotSchema);
+  models.RawSnapshot ?? model<RawSnapshot>("RawSnapshot", RawSnapshotSchema);

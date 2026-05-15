@@ -1,18 +1,18 @@
 export type JobName =
-  | 'discover:developer'
-  | 'ingest:developer'
-  | 'score:snapshot'
-  | 'generate:insights'
-  | 'report:weekly'
+  | "discover:developer"
+  | "ingest:developer"
+  | "score:snapshot"
+  | "generate:insights"
+  | "report:weekly";
 
 /**
  * Base job result returned by all handlers
  */
 export interface JobResult {
-  success: boolean
-  durationMs: number
-  error?: string
-  metadata?: Record<string, unknown>
+  success: boolean;
+  durationMs: number;
+  error?: string;
+  metadata?: Record<string, unknown>;
 }
 
 /**
@@ -20,45 +20,45 @@ export interface JobResult {
  */
 
 export interface DiscoverDeveloperJob {
-  name: 'discover:developer'
+  name: "discover:developer";
   payload: {
-    username: string
-    source: 'search' | 'manual' | 'cron' | 'referral'
-  }
+    username: string;
+    source: "search" | "manual" | "cron" | "referral";
+  };
 }
 
 export interface IngestDeveloperJob {
-  name: 'ingest:developer'
+  name: "ingest:developer";
   payload: {
-    developerId: string
-    username: string
-    force?: boolean
-  }
+    developerId: string;
+    username: string;
+    force?: boolean;
+  };
 }
 
 export interface ScoreSnapshotJob {
-  name: 'score:snapshot'
+  name: "score:snapshot";
   payload: {
-    rawSnapshotId: string
-    developerId: string
-  }
+    rawSnapshotId: string;
+    developerId: string;
+  };
 }
 
 export interface GenerateInsightsJob {
-  name: 'generate:insights'
+  name: "generate:insights";
   payload: {
-    scoredSnapshotId: string
-    developerId: string
-    previousScoredSnapshotId?: string
-  }
+    scoredSnapshotId: string;
+    developerId: string;
+    previousScoredSnapshotId?: string;
+  };
 }
 
 export interface WeeklyReportJob {
-  name: 'report:weekly'
+  name: "report:weekly";
   payload: {
-    developerId: string
-    weekOf: string
-  }
+    developerId: string;
+    weekOf: string;
+  };
 }
 
 /**
@@ -69,13 +69,12 @@ export type AnyJob =
   | IngestDeveloperJob
   | ScoreSnapshotJob
   | GenerateInsightsJob
-  | WeeklyReportJob
-
+  | WeeklyReportJob;
 
 export type JobMap = {
-  'discover:developer': DiscoverDeveloperJob
-  'ingest:developer': IngestDeveloperJob
-  'score:snapshot': ScoreSnapshotJob
-  'generate:insights': GenerateInsightsJob
-  'report:weekly': WeeklyReportJob
-}
+  "discover:developer": DiscoverDeveloperJob;
+  "ingest:developer": IngestDeveloperJob;
+  "score:snapshot": ScoreSnapshotJob;
+  "generate:insights": GenerateInsightsJob;
+  "report:weekly": WeeklyReportJob;
+};

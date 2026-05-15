@@ -5,11 +5,11 @@ import { jobQueue } from "../jobs/queue.js";
 import type { InferSchemaType } from "mongoose";
 
 export type Developer = {
-  githubId: number
-  username: string
-  ingestionStatus: 'pending' | 'running' | 'complete' | 'failed'
-  lastFetchedAt?: Date | null
-}
+  githubId: number;
+  username: string;
+  ingestionStatus: "pending" | "running" | "complete" | "failed";
+  lastFetchedAt?: Date | null;
+};
 
 const usernameSchema = z
   .string()
@@ -49,7 +49,7 @@ export async function developerRoutes(fastify: FastifyInstance) {
   fastify.post<{ Body: DiscoverBody }>(
     "/developers/discover",
     async (request, reply) => {
-       const start = Date.now();
+      const start = Date.now();
 
       const parsed = usernameSchema.safeParse(request.body.username);
 
@@ -104,7 +104,6 @@ export async function developerRoutes(fastify: FastifyInstance) {
           message: `${username} is already indexed.`,
         });
       }
-      
 
       jobQueue.enqueue({
         name: "discover:developer",
@@ -125,7 +124,9 @@ export async function developerRoutes(fastify: FastifyInstance) {
     async (request, reply) => {
       const username = request.params.username.toLowerCase();
 
-      const developer = await DeveloperModel.findOne({ username }).lean<Developer>();
+      const developer = await DeveloperModel.findOne({
+        username,
+      }).lean<Developer>();
 
       if (!developer) {
         return reply.status(404).send({

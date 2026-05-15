@@ -66,7 +66,7 @@ function repoBreadthScore(repos: number, pushes: number): number {
 function collaborationRatio(
   pushes: number,
   prs: number,
-  issues: number
+  issues: number,
 ): number {
   const total = pushes + prs + issues;
   if (total === 0) return 0;
@@ -128,8 +128,8 @@ export function classifyArchetype(input: ArchetypeInput): ArchetypeResult {
       activityScore >= 45
         ? "rising_oss_contributor"
         : consistencyScore >= 40
-        ? "emerging_maintainer"
-        : "focused_contributor";
+          ? "emerging_maintainer"
+          : "focused_contributor";
 
     const descriptions: Record<typeof fallback, string> = {
       rising_oss_contributor:
@@ -167,7 +167,7 @@ export function classifyArchetype(input: ArchetypeInput): ArchetypeResult {
     };
   }
 
-  if (consistencyScore >= 60 && !( reachScore >= 50) && repos >= 5) {
+  if (consistencyScore >= 60 && !(reachScore >= 50) && repos >= 5) {
     return {
       archetype: "emerging_maintainer",
       title: "Emerging maintainer",
@@ -176,7 +176,11 @@ export function classifyArchetype(input: ArchetypeInput): ArchetypeResult {
     };
   }
 
-  if (consistencyScore >= 60 && impactScore >= 55 && Math.abs(activityTrend) <= 0.04) {
+  if (
+    consistencyScore >= 60 &&
+    impactScore >= 55 &&
+    Math.abs(activityTrend) <= 0.04
+  ) {
     return {
       archetype: "reliable_maintainer",
       title: "Reliable maintainer",
@@ -194,7 +198,11 @@ export function classifyArchetype(input: ArchetypeInput): ArchetypeResult {
     };
   }
 
-  if (activityTrend > 0.06 && totalScore >= 40 && impactScore < impactScore + 15) {
+  if (
+    activityTrend > 0.06 &&
+    totalScore >= 40 &&
+    impactScore < impactScore + 15
+  ) {
     return {
       archetype: "rising_oss_contributor",
       title: "Rising open-source contributor",

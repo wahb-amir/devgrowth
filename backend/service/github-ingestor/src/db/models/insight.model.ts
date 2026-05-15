@@ -16,7 +16,7 @@ const InsightCardSchema = new Schema(
         "milestone",
         "neutral",
         "trajectory",
-        "confidence"
+        "confidence",
       ],
       required: true,
     },
