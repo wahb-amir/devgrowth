@@ -17,6 +17,7 @@ DevGrowth answers:
 > “How am I improving as a developer, and what should I do next?”
 
 It tracks:
+
 - Activity over time
 - Contribution quality
 - Consistency
@@ -28,19 +29,23 @@ It tracks:
 ## ⚙️ Tech Stack
 
 Frontend:
+
 - Next.js (Vercel deployment)
 - Tailwind CSS
 - Recharts (data visualization)
 
 Backend:
+
 - Fastify (Node.js)
 - Modular monolith architecture
 - Background job system (cron-based)
 
 Database:
+
 - MongoDB (Atlas)
 
 External API:
+
 - GitHub API
 
 ---
@@ -48,20 +53,21 @@ External API:
 ## 🏗️ System Architecture
 
 GitHub API
-   ↓
+↓
 Backend (Fastify)
-   ↓
+↓
 Discovery → Enrichment → Scoring → Insights
-   ↓
+↓
 MongoDB (Profiles + Snapshots)
-   ↓
+↓
 Next.js Frontend
-   ↓
+↓
 Dashboard + Profile + Progress Tracking
 
 ---
 
 ## 📦 Project Structure
+
 ```
 devgrowth/
 ├── backend
@@ -156,19 +162,21 @@ Frontend (Vercel):
 NEXT_PUBLIC_API_URL=<backend-url>
 
 Backend (HF Space):
+
 - Fastify server
 - Docker deployment
 
 Database:
+
 - MongoDB Atlas
 
 ---
 
 ## 🧪 API Endpoints (MVP)
 
-GET  /api/dev/:username
-GET  /api/dev/:username/snapshot
-GET  /api/leaderboard
+GET /api/dev/:username
+GET /api/dev/:username/snapshot
+GET /api/leaderboard
 POST /api/ingest/:username
 
 ---
@@ -176,19 +184,23 @@ POST /api/ingest/:username
 ## 📈 Future Roadmap
 
 Phase 1:
+
 - GitHub ingestion
 - basic scoring
 - developer profiles
 
 Phase 2:
+
 - insights engine
 - history tracking
 
 Phase 3:
+
 - weekly reports
 - growth charts
 
 Phase 4:
+
 - multi-source enrichment
 - collaboration graph
 

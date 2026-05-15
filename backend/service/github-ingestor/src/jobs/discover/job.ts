@@ -163,7 +163,7 @@ export const discoverDev: JobHandler = async (job) => {
             lastQueuedAt: new Date(),
           },
         },
-        { upsert: true }
+        { upsert: true },
       );
 
       return {
@@ -192,7 +192,7 @@ export const discoverDev: JobHandler = async (job) => {
             lastQueuedAt: new Date(),
           },
         },
-        { upsert: true }
+        { upsert: true },
       );
 
       return {
@@ -215,7 +215,7 @@ export const discoverDev: JobHandler = async (job) => {
             failure: null, // 🚨 clear failure on success
             lastQueuedAt: new Date(),
           },
-        }
+        },
       );
     } else {
       await DeveloperModel.create({

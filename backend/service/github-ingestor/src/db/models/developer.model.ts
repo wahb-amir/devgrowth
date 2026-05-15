@@ -19,7 +19,7 @@ const DeveloperMetadataSchema = new Schema(
     hireable: { type: Boolean, default: null },
     githubCreatedAt: { type: Date, required: true },
   },
-  { _id: false }
+  { _id: false },
 );
 
 /**
@@ -58,7 +58,7 @@ const FailureSchema = new Schema(
       required: true,
     },
   },
-  { _id: false }
+  { _id: false },
 );
 
 /**
@@ -114,7 +114,7 @@ const DeveloperSchema = new Schema(
         return obj;
       },
     },
-  }
+  },
 );
 
 /**
@@ -122,10 +122,7 @@ const DeveloperSchema = new Schema(
  */
 export type Developer = InferSchemaType<typeof DeveloperSchema>;
 export type Failure = InferSchemaType<typeof FailureSchema>;
-export type DeveloperMetadata = InferSchemaType<
-  typeof DeveloperMetadataSchema
->;
-
+export type DeveloperMetadata = InferSchemaType<typeof DeveloperMetadataSchema>;
 
 export const DeveloperModel =
   models.Developer ?? model("Developer", DeveloperSchema);

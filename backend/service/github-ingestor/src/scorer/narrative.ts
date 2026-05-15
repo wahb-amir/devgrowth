@@ -6,9 +6,16 @@
 // =============================================================
 
 import type {
-  L2Features, L3Temporal, L4Cohort, L5Composite,
-  L1QualitySignals, L6Narrative, TensionType,
-  Archetype, MomentumLabel, ConfidenceLevel,
+  L2Features,
+  L3Temporal,
+  L4Cohort,
+  L5Composite,
+  L1QualitySignals,
+  L6Narrative,
+  TensionType,
+  Archetype,
+  MomentumLabel,
+  ConfidenceLevel,
 } from "./types.js";
 
 // =============================================================
@@ -20,7 +27,7 @@ import type {
 function detectTension(
   l2: L2Features,
   l3: L3Temporal,
-  prevSubScores?: HistoricalSubScores
+  prevSubScores?: HistoricalSubScores,
 ): TensionType {
   // Use L2 (pre-decay, pre-spam-penalty) scores for structural tension.
   // L3 values can be suppressed by the spam penalty or recency multiplier,
@@ -47,13 +54,13 @@ function detectTension(
   // Cross-snapshot tensions (require history)
   if (prevSubScores) {
     const activityGrew = l2.activity > prevSubScores.activity * 1.1;
-    const qualityFell  = l2.quality  < prevSubScores.quality  * 0.85;
+    const qualityFell = l2.quality < prevSubScores.quality * 0.85;
     if (activityGrew && qualityFell) {
       return "quality_activity_divergence";
     }
 
     const wasConsistent = prevSubScores.consistency > 55;
-    const burstNow      = l2.activityVariancePenalty > 20;
+    const burstNow = l2.activityVariancePenalty > 20;
     if (wasConsistent && burstNow) {
       return "consistency_burst_conflict";
     }
@@ -81,16 +88,26 @@ const TENSION_DESCRIPTIONS: Record<TensionType, string | null> = {
 // ARCHETYPE HEADLINES
 // =============================================================
 const ARCHETYPE_HEADLINES: Record<Archetype, (score: number) => string> = {
-  elite:            (s) => `Elite-tier developer — top ${100 - Math.round(s)}th percentile composite.`,
-  framework_author: (_) => "Framework author profile — high ecosystem leverage with broad downstream impact.",
-  infra_engineer:   (_) => "Infrastructure engineer — deep quality signals with strong consistency.",
-  research_dev:     (_) => "Research-oriented developer — high-complexity, specialized contributions.",
-  maintainer:       (_) => "Open-source maintainer — consistent, review-heavy, broad contribution pattern.",
-  builder:          (_) => "Prolific builder — high shipping velocity with room to grow review depth.",
-  impact_dev:       (_) => "High-impact developer — strong reputation with a lower current activity pace.",
-  rising_dev:       (_) => "Rising contributor — accelerating momentum with growing output quality.",
-  balanced:         (_) => "Well-rounded profile — signals distributed evenly across dimensions.",
-  ghost:            (_) => "Dormant profile — minimal recent signals across all dimensions.",
+  elite: (s) =>
+    `Elite-tier developer — top ${100 - Math.round(s)}th percentile composite.`,
+  framework_author: (_) =>
+    "Framework author profile — high ecosystem leverage with broad downstream impact.",
+  infra_engineer: (_) =>
+    "Infrastructure engineer — deep quality signals with strong consistency.",
+  research_dev: (_) =>
+    "Research-oriented developer — high-complexity, specialized contributions.",
+  maintainer: (_) =>
+    "Open-source maintainer — consistent, review-heavy, broad contribution pattern.",
+  builder: (_) =>
+    "Prolific builder — high shipping velocity with room to grow review depth.",
+  impact_dev: (_) =>
+    "High-impact developer — strong reputation with a lower current activity pace.",
+  rising_dev: (_) =>
+    "Rising contributor — accelerating momentum with growing output quality.",
+  balanced: (_) =>
+    "Well-rounded profile — signals distributed evenly across dimensions.",
+  ghost: (_) =>
+    "Dormant profile — minimal recent signals across all dimensions.",
 };
 
 // =============================================================
@@ -99,33 +116,49 @@ const ARCHETYPE_HEADLINES: Record<Archetype, (score: number) => string> = {
 function buildStrengths(
   l3: L3Temporal,
   l1: L1QualitySignals,
-  l5: L5Composite
+  l5: L5Composite,
 ): string[] {
   const strengths: string[] = [];
 
   if (l3.activity > 65)
-    strengths.push(`High activity rate (${Math.round(l3.activity)}/100) — consistently shipping.`);
+    strengths.push(
+      `High activity rate (${Math.round(l3.activity)}/100) — consistently shipping.`,
+    );
 
   if (l3.impact > 65)
-    strengths.push(`Strong ecosystem impact (${Math.round(l3.impact)}/100) — work is referenced and adopted.`);
+    strengths.push(
+      `Strong ecosystem impact (${Math.round(l3.impact)}/100) — work is referenced and adopted.`,
+    );
 
   if (l1.prMergeRate > 0.75)
-    strengths.push(`High PR merge rate (${Math.round(l1.prMergeRate * 100)}%) — contributions are well-targeted.`);
+    strengths.push(
+      `High PR merge rate (${Math.round(l1.prMergeRate * 100)}%) — contributions are well-targeted.`,
+    );
 
-  if (l1.reviewParticipationRate > 0.60)
-    strengths.push(`Strong review participation — collaborates actively beyond own PRs.`);
+  if (l1.reviewParticipationRate > 0.6)
+    strengths.push(
+      `Strong review participation — collaborates actively beyond own PRs.`,
+    );
 
   if (l3.consistency > 60)
-    strengths.push(`Consistent contribution pattern — low variance in weekly output.`);
+    strengths.push(
+      `Consistent contribution pattern — low variance in weekly output.`,
+    );
 
   if (l3.momentumLabel === "accelerating")
-    strengths.push(`Positive velocity trend — score trajectory is accelerating.`);
+    strengths.push(
+      `Positive velocity trend — score trajectory is accelerating.`,
+    );
 
   if (l1.repoBreadthScore > 0.65)
-    strengths.push(`Broad repository footprint — contributions span multiple active projects.`);
+    strengths.push(
+      `Broad repository footprint — contributions span multiple active projects.`,
+    );
 
   if (l3.reach > 60)
-    strengths.push(`High reach (${Math.round(l3.reach)}/100) — strong community presence.`);
+    strengths.push(
+      `High reach (${Math.round(l3.reach)}/100) — strong community presence.`,
+    );
 
   return strengths.slice(0, 4); // cap at 4
 }
@@ -137,24 +170,32 @@ function buildWatchAreas(
   l2: L2Features,
   l3: L3Temporal,
   l1: L1QualitySignals,
-  tension: TensionType
+  tension: TensionType,
 ): string[] {
   const areas: string[] = [];
 
   if (l2.spamPenaltyApplied)
-    areas.push("Activity spam signals detected — high push-to-merge ratio or low-substance commits.");
+    areas.push(
+      "Activity spam signals detected — high push-to-merge ratio or low-substance commits.",
+    );
 
   if (l1.spamFlags.singleRepoConcentration)
-    areas.push("Over 80% of pushes concentrated in a single repository — consider diversifying contributions.");
+    areas.push(
+      "Over 80% of pushes concentrated in a single repository — consider diversifying contributions.",
+    );
 
   if (l3.momentumLabel === "volatile")
-    areas.push("Volatile score trajectory — activity spikes without sustained follow-through.");
+    areas.push(
+      "Volatile score trajectory — activity spikes without sustained follow-through.",
+    );
 
-  if (l3.heatScore < 0.30)
+  if (l3.heatScore < 0.3)
     areas.push("Low recency heat — profile may be entering a dormant period.");
 
   if (l1.prMergeRate < 0.35 && l3.activity > 40)
-    areas.push(`Low PR merge rate (${Math.round(l1.prMergeRate * 100)}%) despite high activity — review contribution targeting.`);
+    areas.push(
+      `Low PR merge rate (${Math.round(l1.prMergeRate * 100)}%) despite high activity — review contribution targeting.`,
+    );
 
   if (tension !== "none")
     areas.push("Score tension detected — see tension analysis below.");
@@ -167,8 +208,8 @@ function buildWatchAreas(
 // =============================================================
 function buildTrajectory(l3: L3Temporal, shapedScore: number): string {
   const score = Math.round(shapedScore);
-  const vel   = Math.round(l3.velocity * 10) / 10;
-  const heat  = Math.round(l3.heatScore * 100);
+  const vel = Math.round(l3.velocity * 10) / 10;
+  const heat = Math.round(l3.heatScore * 100);
 
   if (l3.momentumLabel === "accelerating") {
     return `Score is climbing (+${vel} pts/snapshot EMA). At current velocity, the ${score >= 80 ? "elite" : score >= 60 ? "strong" : "average"} band is within reach.`;
@@ -185,7 +226,10 @@ function buildTrajectory(l3: L3Temporal, shapedScore: number): string {
 // =============================================================
 // CONFIDENCE STATEMENT
 // =============================================================
-const CONFIDENCE_STATEMENTS: Record<ConfidenceLevel, (ci: [number, number], n: number) => string> = {
+const CONFIDENCE_STATEMENTS: Record<
+  ConfidenceLevel,
+  (ci: [number, number], n: number) => string
+> = {
   very_low: (ci, n) =>
     `Very low confidence (${n} snapshot${n === 1 ? "" : "s"}). Score range is wide: [${ci[0]}–${ci[1]}]. Interpret with caution — 4+ snapshots are needed for stable signals.`,
   low: (ci, n) =>
@@ -219,26 +263,27 @@ export function computeNarrative(
   l4: L4Cohort,
   l5: L5Composite,
   snapshotCount: number,
-  prevSubScores?: HistoricalSubScores
+  prevSubScores?: HistoricalSubScores,
 ): L6Narrative {
   const tension = detectTension(l2, l3, prevSubScores);
   const tensionDescription = TENSION_DESCRIPTIONS[tension];
 
   const archetypeHeadline = ARCHETYPE_HEADLINES[l5.archetype](l5.shapedScore);
 
-  const percentileClause = l4.percentileRank !== null
-    ? ` Ranks in the top ${Math.round(100 - l4.percentileRank)}% of ${l4.cohortLabel}.`
-    : "";
+  const percentileClause =
+    l4.percentileRank !== null
+      ? ` Ranks in the top ${Math.round(100 - l4.percentileRank)}% of ${l4.cohortLabel}.`
+      : "";
 
   const headline = archetypeHeadline + percentileClause;
 
-  const strengths  = buildStrengths(l3, l1, l5);
+  const strengths = buildStrengths(l3, l1, l5);
   const watchAreas = buildWatchAreas(l2, l3, l1, tension);
 
   const trajectoryStatement = buildTrajectory(l3, l5.shapedScore);
   const confidenceStatement = CONFIDENCE_STATEMENTS[l5.confidenceLevel](
     l5.confidenceInterval,
-    snapshotCount
+    snapshotCount,
   );
 
   return {

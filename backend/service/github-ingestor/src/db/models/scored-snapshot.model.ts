@@ -11,7 +11,7 @@ const ScoringSignalSchema = new Schema(
     pointsContributed: { type: Number, required: true },
     maxPoints: { type: Number, required: true },
   },
-  { _id: false }
+  { _id: false },
 );
 
 const SubScoreSchema = new Schema(
@@ -22,7 +22,7 @@ const SubScoreSchema = new Schema(
     signals: { type: [ScoringSignalSchema], default: [] },
     tags: { type: [String], default: [] },
   },
-  { _id: false }
+  { _id: false },
 );
 
 const NormalizedProfileSchema = new Schema(
@@ -38,7 +38,7 @@ const NormalizedProfileSchema = new Schema(
       releases: { type: Number, default: 0 },
     },
   },
-  { _id: false }
+  { _id: false },
 );
 
 const ScoredSnapshotSchema = new Schema(
@@ -121,7 +121,7 @@ const ScoredSnapshotSchema = new Schema(
         return obj;
       },
     },
-  }
+  },
 );
 
 ScoredSnapshotSchema.index({ developerId: 1, takenAt: -1 });
