@@ -8,7 +8,7 @@ export type Portfolio = {
   sourceUrl: string;
   normalizedUrl: string;
   hostname: string;
-  
+
   ingestionStatus: "pending" | "running" | "complete" | "failed";
   lastFetchedAt?: Date | null;
   failure?: {
@@ -153,7 +153,7 @@ export async function portfolioRoutes(fastify: FastifyInstance) {
           url: normalizedUrl,
           sourceUrl,
           hostname,
-          source: normalizeSource("user")
+          source: normalizeSource("user"),
         },
       });
 
@@ -181,7 +181,9 @@ export async function portfolioRoutes(fastify: FastifyInstance) {
 
       const { normalizedUrl } = normalizePortfolioUrl(parsed.data);
 
-      const portfolio = await PortfolioModel.findOne({ normalizedUrl }).lean<Portfolio>();
+      const portfolio = await PortfolioModel.findOne({
+        normalizedUrl,
+      }).lean<Portfolio>();
 
       if (!portfolio) {
         return reply.status(404).send({

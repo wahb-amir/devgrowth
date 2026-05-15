@@ -1,92 +1,109 @@
+import type { Job, JobResult } from "../queue.js";
 import { PortfolioModel } from "../../db/models/portfolio.model.js";
-import type { JobHandler } from "../queue.js";
 
-type ParsePortfolioStoreJob = {
-  name: "parse:portfolio:store";
-  normalizedUrl: string;
-  sourceUrl?: string;
-  hostname?: string;
-  bytes?: number;
-  draft: {
+// ─── Job handler ──────────────────────────────────────────────────────────────
+
+/**
+ * Stage 2 (final) of the parse pipeline.
+ *
+ * Responsibilities:
+ *  - Receive merged parsed data from collect.job or rendered.job
+ *  - Persist to MongoDB with a single idempotent updateOne
+ *  - Set parserVersion to "v2" (or "v2-playwright" for rendered path)
+ *  - Clear any prior parseFailure on success
+ *
+ * This job does NOT re-extract or modify the parsed data.
+ * It is a pure persistence step.
+ *
+ * Idempotency: if this job is retried (e.g. MongoDB blip), running it again
+ * with the same data is safe — it just overwrites with identical values.
+ */
+export async function parsePortfolioStore(job: Job): Promise<JobResult> {
+  const start = Date.now();
+
+  const {
+    portfolioId,
+    parsed,
+    contentHash,
+    pageTitle,
+    metaDescription,
+    canonicalUrl,
+    renderingStrategy,
+    pagesProcessed,
+    totalTokens,
+  } = job as {
+    portfolioId: string;
+    parsed: Record<string, unknown>;
+    contentHash: string | null;
     pageTitle: string | null;
     metaDescription: string | null;
     canonicalUrl: string | null;
-    contentHash: string;
-    parsed: any;
+    renderingStrategy: "static" | "playwright";
+    pagesProcessed?: number;
+    totalTokens?: number;
   };
-};
 
-export const parsePortfolioStore: JobHandler = async (job) => {
-  const start = Date.now();
+  // ── Input validation ───────────────────────────────────────────────────────
+  if (!portfolioId) {
+    return {
+      success: false,
+      error: "store job missing portfolioId",
+      retryable: false,
+      durationMs: 0,
+    };
+  }
 
+  if (!parsed || typeof parsed !== "object") {
+    return {
+      success: false,
+      error: "store job missing or invalid parsed data",
+      retryable: false,
+      durationMs: 0,
+    };
+  }
+
+  // ── Persist ────────────────────────────────────────────────────────────────
   try {
-    const { normalizedUrl, sourceUrl, hostname, draft, bytes } = (job.payload ||
-      {}) as ParsePortfolioStoreJob;
-    if (!normalizedUrl || typeof normalizedUrl !== "string") {
-      return {
-        success: false,
-        error: "normalizedUrl_required",
-        durationMs: Date.now() - start,
-      };
-    }
+    const parserVersion =
+      renderingStrategy === "playwright" ? "v2-playwright" : "v2";
 
-    if (!draft || typeof draft !== "object") {
-      return {
-        success: false,
-        error: "draft_required",
-        durationMs: Date.now() - start,
-      };
-    }
-
-    const existing = await PortfolioModel.findOne({ normalizedUrl }).lean();
-
-    if (existing?.contentHash && existing.contentHash === draft.contentHash) {
-      await PortfolioModel.updateOne(
-        { normalizedUrl },
-        {
-          $set: {
-            parseStatus: "complete",
-            parsedAt: new Date(),
-            parseFailure: null,
-            lastFetchedAt: new Date(),
-          },
-        },
-      );
-
-      return {
-        success: true,
-        action: "unchanged_skip",
-        durationMs: Date.now() - start,
-      };
-    }
-
-    const update = await PortfolioModel.updateOne(
-      { normalizedUrl },
+    const result = await PortfolioModel.updateOne(
+      { _id: portfolioId },
       {
         $set: {
-          sourceUrl: sourceUrl || normalizedUrl,
-          hostname: hostname || new URL(normalizedUrl).hostname,
           parseStatus: "complete",
+          parsed,
+          contentHash: contentHash ?? null,
+          pageTitle: pageTitle ?? null,
+          metaDescription: metaDescription ?? null,
+          canonicalUrl: canonicalUrl ?? null,
           parsedAt: new Date(),
-          parseFailure: null,
-          pageTitle: draft.pageTitle || null,
-          metaDescription: draft.metaDescription || null,
-          canonicalUrl: draft.canonicalUrl || null,
-          contentHash: draft.contentHash || null,
-          parsed: draft.parsed,
           lastFetchedAt: new Date(),
+          parserVersion,
+          // Clear any prior failure state
+          parseFailure: null,
         },
       },
-      { upsert: false },
     );
 
-    if (update.matchedCount === 0) {
+    if (result.matchedCount === 0) {
+      // Record was deleted between collect and store — treat as permanent
       return {
         success: false,
-        error: "portfolio_not_found",
+        error: `Portfolio record not found during store: ${portfolioId}`,
+        retryable: false,
         durationMs: Date.now() - start,
       };
     }
+
+    console.info(
+      `[store:${portfolioId}] ✓ Saved ` +
+        `(version=${parserVersion}, ` +
+        `strategy=${renderingStrategy}, ` +
+        `pages=${pagesProcessed ?? "?"}, ` +
+        `tokens=${totalTokens ?? "?"}, ` +
+        `confidence=${(parsed as any)?.quality?.overall_confidence?.toFixed(3) ?? "?"})`,
+    );
 
     return {
       success: true,
@@ -94,11 +111,16 @@ export const parsePortfolioStore: JobHandler = async (job) => {
       durationMs: Date.now() - start,
     };
   } catch (err: any) {
+    // MongoDB errors are generally retryable (transient connection issues)
+    console.error(
+      `[store:${portfolioId}] ✗ MongoDB write failed: ${err.message}`,
+    );
+
     return {
       success: false,
-      error: err?.message || "parse_portfolio_store_failed",
-      retryable: err?.retryable ?? false,
+      error: err.message,
+      retryable: true, // Let the queue retry with backoff
       durationMs: Date.now() - start,
     };
   }
-};
+}

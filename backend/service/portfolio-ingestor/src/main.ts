@@ -10,10 +10,8 @@ import { discoverPortfolio } from "./jobs/discover/job.js";
 import { ingestPortfolio } from "./jobs/ingest/job.js";
 
 import { parsePortfolioCollect } from "./jobs/portfolio/collect.job.js";
+import { parsePortfolioRendered } from "./jobs/portfolio/rendered.job.js";
 import { parsePortfolioStore } from "./jobs/portfolio/store.job.js";
-
-// future:
-// import { parsePortfolioLLMEnrichment } from "./jobs/portfolio/parsePortfolioLLMEnrichment.js";
 
 async function main() {
   const config = loadConfig();
@@ -43,9 +41,7 @@ async function main() {
 
     try {
       await server.close();
-
       console.info("✅ Server shutdown complete");
-
       process.exit(0);
     } catch (err) {
       console.error("Error during shutdown:", err);
@@ -60,16 +56,19 @@ async function main() {
 function registerJobHandlers() {
   console.info("Registering job handlers...");
 
-  // discovery layer
+  // layer 1 — discovery
   jobQueue.register("discover:portfolio", discoverPortfolio);
 
-  // save normalized portfolio record
+  // layer 2 — ingestion (normalize + persist seed record)
   jobQueue.register("ingest:portfolio", ingestPortfolio);
 
-  // stage 1 → fetch + extract + preprocess
+  // layer 3 — parse: static path (crawl + extract + merge)
   jobQueue.register("parse:portfolio:collect", parsePortfolioCollect);
 
-  // stage 2 → persist structured output
+  // layer 3b — parse: SPA/JS-rendered fallback (Playwright)
+  jobQueue.register("parse:portfolio:rendered", parsePortfolioRendered);
+
+  // layer 4 — parse: persist structured output
   jobQueue.register("parse:portfolio:store", parsePortfolioStore);
 
   console.info("✅ Job handlers registered.");
