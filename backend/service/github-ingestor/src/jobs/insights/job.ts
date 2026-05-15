@@ -172,7 +172,6 @@ export async function generateInsightsJob(job: Job): Promise<JobResult> {
     }
 
     const payload = job.payload as GenerateInsightsPayload | undefined;
-
     if (!payload?.developerId || !payload?.scoredSnapshotId) {
       return {
         success: false,

@@ -337,20 +337,23 @@ export const scoreDevV3Full: JobHandler = async (job) => {
   // generate:insights reads the persisted narrative directly —
   // no re-scoring needed.
   enqueueTracked(
-  {
-    name: "generate:insights",
-    payload: {
+    {
+      name: "generate:insights",
+      payload: {
+        developerId: String(developer._id),
+        scoredSnapshotId: String(saved._id),
+        source: "score",
+        maxAttempts: 1,
+      },
+    },
+    {
       developerId: String(developer._id),
       source: "score",
-      maxAttempts: 1
+      metadata: {
+        scoredSnapshotId: String(saved._id),
+      },
     },
-  },
-  {
-    developerId: String(developer._id),
-    source: "score",
-    maxAttempts: 1
-  }
-);
+  );
 
   // ── 8. Return job result ────────────────────────────────────
   return {
