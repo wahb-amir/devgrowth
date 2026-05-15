@@ -31,7 +31,7 @@ export async function parsePortfolioStore(job: Job): Promise<JobResult> {
     renderingStrategy,
     pagesProcessed,
     totalTokens,
-  } = job as {
+  } = job as unknown as {
     portfolioId: string;
     parsed: Record<string, unknown>;
     contentHash: string | null;

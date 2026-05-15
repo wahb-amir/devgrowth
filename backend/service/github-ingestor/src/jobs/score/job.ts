@@ -341,20 +341,14 @@ export const scoreDevV3Full: JobHandler = async (job) => {
     name: "generate:insights",
     payload: {
       developerId: String(developer._id),
-      scoredSnapshotId: String(saved._1d),
-      previousScoredSnapshotId: previousDoc?._id
-        ? String(previousDoc._id)
-        : undefined,
+      source: "score",
+      maxAttempts: 1
     },
   },
   {
     developerId: String(developer._id),
     source: "score",
-    maxAttempts: 1,
-    metadata: {
-      developerId: String(developer._id),
-      scoredSnapshotId: String(saved._id),
-    },
+    maxAttempts: 1
   }
 );
 
