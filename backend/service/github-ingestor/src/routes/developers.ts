@@ -3,6 +3,7 @@ import { z } from "zod";
 import { DeveloperModel } from "../db/models/index.js";
 import { jobQueue } from "../jobs/queue.js";
 import type { InferSchemaType } from "mongoose";
+import { enqueueTracked } from "../jobs/TrackedEnqueue.js";
 
 export type Developer = {
   githubId: number;
@@ -105,10 +106,17 @@ export async function developerRoutes(fastify: FastifyInstance) {
         });
       }
 
-      jobQueue.enqueue({
-        name: "discover:developer",
-        payload: { username, source: "search" },
-      });
+      enqueueTracked(
+        {
+          name: "discover:developer",
+          payload: { username, source: "search" },
+        },
+        {
+          developerId: username,
+          source: "search",
+          metadata: { username, source: "search" },
+        },
+      );
 
       return reply.status(202).send({
         status: "queued",

@@ -10,7 +10,7 @@ import {
   isTrapUrl,
 } from "./security.js";
 import { isAllowedByRobots, fetchRobotsTxt } from "./fetcher.js";
-import { jobQueue } from "../queue.js";
+import { enqueueTracked } from "../TrackedEnqueue.js";
 import crypto from "crypto";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -231,18 +231,24 @@ export async function parsePortfolioRendered(job: Job): Promise<JobResult> {
       `Rendered via Playwright (SPA detected) — ${extractions.length} page(s) processed`,
     ];
 
-    jobQueue.enqueue({
-      name: "parse:portfolio:store",
-      portfolioId,
-      parsed: merged,
-      contentHash,
-      pageTitle: seedCleaned.title,
-      metaDescription: seedCleaned.metaDescription,
-      canonicalUrl: seedCleaned.canonicalUrl,
-      renderingStrategy: "playwright",
-      pagesProcessed: extractions.length,
-      totalTokens,
-    });
+    enqueueTracked(
+      {
+        name: "parse:portfolio:store",
+        portfolioId,
+        parsed: merged,
+        contentHash,
+        pageTitle: seedCleaned.title,
+        metaDescription: seedCleaned.metaDescription,
+        canonicalUrl: seedCleaned.canonicalUrl,
+        renderingStrategy: "playwright",
+        pagesProcessed: extractions.length,
+        totalTokens,
+      },
+      {
+        developerId: "unknown",
+        source: "portfolio",
+      },
+    );
 
     return {
       success: true,

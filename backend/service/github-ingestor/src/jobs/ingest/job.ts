@@ -1,6 +1,7 @@
 import { DeveloperModel } from "../../db/models/developer.model.js";
 import { RawSnapshotModel } from "../../db/models/raw-snapshot.model.js";
 import { jobQueue, JobHandler } from "../queue.js";
+import { enqueueTracked } from "../TrackedEnqueue.js";
 
 const GITHUB_API_BASE = "https://api.github.com";
 const PIPELINE_VERSION = 1;
@@ -282,13 +283,20 @@ export const ingestDev: JobHandler = async (job) => {
 
     /* ---------------- SCORE JOB ---------------- */
 
-    await jobQueue.enqueue({
-      name: "score:developer",
-      payload: {
-        username: normalized,
-        rawSnapshotId: snapshot._id,
+    enqueueTracked(
+      {
+        name: "score:developer",
+        payload: {
+          username: normalized,
+          rawSnapshotId: snapshot._id,
+        },
       },
-    });
+      {
+        developerId: locked._id,
+        source: "ingest",
+        metadata: { username: normalized },
+      },
+    );
 
     return {
       success: true,

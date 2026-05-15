@@ -1,5 +1,6 @@
 import { PortfolioModel } from "../../db/models/portfolio.model.js";
 import { type JobHandler, jobQueue } from "../queue.js";
+import { enqueueTracked } from "../TrackedEnqueue.js";
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 type IngestPortfolioPayload = {
@@ -306,14 +307,20 @@ export const ingestPortfolio: JobHandler = async (job) => {
       { upsert: true },
     );
 
-    await jobQueue.enqueue({
-      name: "parse:portfolio:collect",
-      payload: {
-        portfolioId:
-          existing?._id.toString() ||
-          (await PortfolioModel.findOne({ normalizedUrl }))._id.toString(),
+    enqueueTracked(
+      {
+        name: "parse:portfolio:collect",
+        payload: {
+          portfolioId:
+            existing?._id.toString() ||
+            (await PortfolioModel.findOne({ normalizedUrl }))._id.toString(),
+        },
       },
-    });
+      {
+        developerId: existing?.developerId?.toString() ?? "unknown",
+        source: "portfolio",
+      },
+    );
 
     return {
       success: true,

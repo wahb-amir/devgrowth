@@ -1,6 +1,7 @@
 import { PortfolioModel } from "../../db/models/portfolio.model.js";
 import { jobQueue, type JobHandler } from "../queue.js";
 import { normalizeSource } from "../../lib/normalizeSource.js";
+import { enqueueTracked } from "../TrackedEnqueue.js";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -174,15 +175,22 @@ export const discoverPortfolio: JobHandler = async (job) => {
     }
 
     /* ---------------- QUEUE INGEST ---------------- */
-    await jobQueue.enqueue({
-      name: "ingest:portfolio",
-      payload: {
-        url: normalizedUrl,
-        sourceUrl,
-        hostname,
-        priority: source === "manual" ? 10 : 5,
-      },
-    });
+    await enqueueTracked(
+      {
+        name: "ingest:portfolio",
+        payload: {
+          url: normalizedUrl,
+          sourceUrl,
+          hostname,
+          priority: source === "manual" ? 10 : 5,
+        },
+       },
+      {
+        developerId: normalizedUrl, 
+        source: source || "discovery",
+        metadata: { url: normalizedUrl, source: source || "discovery" },
+       },
+     );
 
     return {
       success: true,

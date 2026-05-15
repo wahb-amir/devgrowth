@@ -3,6 +3,7 @@ import { jobQueue } from "./queue.js";
 import { DeveloperModel } from "../db/models/index.js";
 import { getConfig } from "../lib/config.js";
 import { hasRateLimitHeadroom } from "../lib/github-service.js";
+import { enqueueTracked } from "./TrackedEnqueue.js";
 
 export function registerScheduledJobs() {
   const config = getConfig();
@@ -44,10 +45,17 @@ export function registerScheduledJobs() {
       console.info(`[CRON] Enqueueing ${due.length} developers for ingestion.`);
 
       for (const dev of due) {
-        jobQueue.enqueue({
-          name: "ingest:developer",
-          payload: { developerId: String(dev._id), username: dev.username },
-        });
+        enqueueTracked(
+          {
+            name: "ingest:developer",
+            payload: { developerId: String(dev._id), username: dev.username },
+          },
+          {
+            developerId: String(dev._id),
+            source: "scheduled",
+            metadata: { username: dev.username },
+          },
+        );
       }
     } catch (err) {
       console.error("[CRON] Hourly ingestion tick failed:", err);
@@ -74,10 +82,16 @@ export function registerScheduledJobs() {
       );
 
       for (const dev of tracked) {
-        jobQueue.enqueue({
-          name: "report:weekly",
-          payload: { developerId: String(dev._id), weekOf },
-        });
+        enqueueTracked(
+          {
+            name: "report:weekly",
+            payload: { developerId: String(dev._id), weekOf },
+          },
+          {
+            developerId: String(dev._id),
+            source: "scheduled",
+          }
+        );
       }
     } catch (err) {
       console.error("[CRON] Weekly report job failed:", err);

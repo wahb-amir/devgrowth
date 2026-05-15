@@ -3,7 +3,7 @@ import { PortfolioModel } from "../../db/models/portfolio.model.js";
 import { crawlPortfolio } from "./crawler.js";
 import { extractFromPage } from "./parser.js";
 import { mergePortfolioPages, type PageExtraction } from "./merger.js";
-import { jobQueue } from "../queue.js";
+import { enqueueTracked } from "../TrackedEnqueue.js";
 import crypto from "crypto";
 
 // ─── Job handler ──────────────────────────────────────────────────────────────
@@ -87,16 +87,22 @@ export async function parsePortfolioCollect(job: Job): Promise<JobResult> {
       console.info(
         `[collect:${portfolioId}] SPA detected — routing to rendered job`,
       );
-      jobQueue.enqueue({
-        name: "parse:portfolio:rendered",
-        portfolioId,
-        seedUrl,
-        crawlMeta: {
-          stats: crawlResult.stats,
-          skippedUrls: crawlResult.skippedUrls,
-          sitemapUrls: crawlResult.sitemapUrls,
+      enqueueTracked(
+        {
+          name: "parse:portfolio:rendered",
+          portfolioId,
+          seedUrl,
+          crawlMeta: {
+            stats: crawlResult.stats,
+            skippedUrls: crawlResult.skippedUrls,
+            sitemapUrls: crawlResult.sitemapUrls,
+          },
         },
-      });
+        {
+          developerId: "unknown",
+          source: "portfolio",
+        },
+      );
       return {
         success: true,
         action: "spa_detected:enqueued_rendered",
@@ -161,18 +167,24 @@ export async function parsePortfolioCollect(job: Job): Promise<JobResult> {
       .update(seedPage.fetchResult.html)
       .digest("hex");
 
-    jobQueue.enqueue({
-      name: "parse:portfolio:store",
-      portfolioId,
-      parsed: merged,
-      contentHash,
-      pageTitle: seedPage.cleaned.title,
-      metaDescription: seedPage.cleaned.metaDescription,
-      canonicalUrl: seedPage.cleaned.canonicalUrl,
-      renderingStrategy: "static",
-      pagesProcessed: extractions.length,
-      totalTokens,
-    });
+    enqueueTracked(
+      {
+        name: "parse:portfolio:store",
+        portfolioId,
+        parsed: merged,
+        contentHash,
+        pageTitle: seedPage.cleaned.title,
+        metaDescription: seedPage.cleaned.metaDescription,
+        canonicalUrl: seedPage.cleaned.canonicalUrl,
+        renderingStrategy: "static",
+        pagesProcessed: extractions.length,
+        totalTokens,
+      },
+      {
+        developerId: "unknown",
+        source: "portfolio",
+      },
+    );
 
     return {
       success: true,
