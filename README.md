@@ -101,6 +101,7 @@ devgrowth/
 │       │   │   │   ├── scheduler.ts
 │       │   │   │   ├── score
 │       │   │   │   │   └── job.ts
+│       │   │   │   ├── TrackedEnqueue.ts
 │       │   │   │   └── types.ts
 │       │   │   ├── lib
 │       │   │   │   ├── config.ts
@@ -148,7 +149,8 @@ devgrowth/
 │       │   │   │   │   ├── skills-dictionary.ts
 │       │   │   │   │   ├── store.job.ts
 │       │   │   │   │   └── types.ts
-│       │   │   │   └── queue.ts
+│       │   │   │   ├── queue.ts
+│       │   │   │   └── TrackedEnqueue.ts
 │       │   │   ├── lib
 │       │   │   │   ├── config.ts
 │       │   │   │   └── normalizeSource.ts
@@ -170,7 +172,6 @@ devgrowth/
 │           │   │   └── migration_lock.toml
 │           │   └── schema.prisma
 │           ├── README.md
-│           ├── schema.prisma:7
 │           ├── src
 │           │   ├── app.ts
 │           │   ├── config
