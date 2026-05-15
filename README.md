@@ -72,50 +72,89 @@ Dashboard + Profile + Progress Tracking
 devgrowth/
 ├── backend
 │   └── service
-│       └── github-ingestor
+│       ├── github-ingestor
+│       │   ├── package.json
+│       │   ├── pnpm-lock.yaml
+│       │   ├── pnpm-workspace.yaml
+│       │   ├── src
+│       │   │   ├── db
+│       │   │   │   ├── connection.ts
+│       │   │   │   └── models
+│       │   │   │       ├── developer.model.ts
+│       │   │   │       ├── index.ts
+│       │   │   │       ├── insight.model.ts
+│       │   │   │       ├── raw-snapshot.model.ts
+│       │   │   │       └── scored-snapshot.model.ts
+│       │   │   ├── insights
+│       │   │   │   ├── archetypes.ts
+│       │   │   │   ├── dedup.ts
+│       │   │   │   ├── engine.ts
+│       │   │   │   └── score-band.ts
+│       │   │   ├── jobs
+│       │   │   │   ├── discover
+│       │   │   │   │   └── job.ts
+│       │   │   │   ├── ingest
+│       │   │   │   │   └── job.ts
+│       │   │   │   ├── insights
+│       │   │   │   │   └── job.ts
+│       │   │   │   ├── queue.ts
+│       │   │   │   ├── scheduler.ts
+│       │   │   │   ├── score
+│       │   │   │   │   └── job.ts
+│       │   │   │   └── types.ts
+│       │   │   ├── lib
+│       │   │   │   ├── config.ts
+│       │   │   │   ├── github-client.ts
+│       │   │   │   └── github-service.ts
+│       │   │   ├── main.ts
+│       │   │   ├── routes
+│       │   │   │   ├── developers.ts
+│       │   │   │   └── health.ts
+│       │   │   ├── scorer
+│       │   │   │   ├── layers.ts
+│       │   │   │   ├── math.ts
+│       │   │   │   ├── narrative.ts
+│       │   │   │   ├── scorer.ts
+│       │   │   │   ├── Scorerv3full.test.ts
+│       │   │   │   └── types.ts
+│       │   │   └── server.ts
+│       │   └── tsconfig.json
+│       └── portfolio-ingestor
 │           ├── package.json
 │           ├── pnpm-lock.yaml
+│           ├── pnpm-workspace.yaml
 │           ├── src
 │           │   ├── db
 │           │   │   ├── connection.ts
 │           │   │   └── models
-│           │   │       ├── developer.model.ts
-│           │   │       ├── index.ts
-│           │   │       ├── insight.model.ts
-│           │   │       ├── raw-snapshot.model.ts
-│           │   │       └── scored-snapshot.model.ts
-│           │   ├── insights
-│           │   │   ├── archetypes.ts
-│           │   │   ├── dedup.ts
-│           │   │   ├── engine.ts
-│           │   │   └── score-band.ts
+│           │   │       └── portfolio.model.ts
 │           │   ├── jobs
 │           │   │   ├── discover
 │           │   │   │   └── job.ts
 │           │   │   ├── ingest
 │           │   │   │   └── job.ts
-│           │   │   ├── insights
-│           │   │   │   └── job.ts
-│           │   │   ├── queue.ts
-│           │   │   ├── scheduler.ts
-│           │   │   ├── score
-│           │   │   │   └── job.ts
-│           │   │   └── types.ts
+│           │   │   ├── portfolio
+│           │   │   │   ├── cleaner.ts
+│           │   │   │   ├── collect.job.ts
+│           │   │   │   ├── crawler.ts
+│           │   │   │   ├── enricher.ts
+│           │   │   │   ├── extractor.ts
+│           │   │   │   ├── fetcher.ts
+│           │   │   │   ├── merger.ts
+│           │   │   │   ├── parser.ts
+│           │   │   │   ├── rendered.job.ts
+│           │   │   │   ├── security.ts
+│           │   │   │   ├── skills-dictionary.ts
+│           │   │   │   ├── store.job.ts
+│           │   │   │   └── types.ts
+│           │   │   └── queue.ts
 │           │   ├── lib
 │           │   │   ├── config.ts
-│           │   │   ├── github-client.ts
-│           │   │   └── github-service.ts
+│           │   │   └── normalizeSource.ts
 │           │   ├── main.ts
 │           │   ├── routes
-│           │   │   ├── developers.ts
-│           │   │   └── health.ts
-│           │   ├── scorer
-│           │   │   ├── layers.ts
-│           │   │   ├── math.ts
-│           │   │   ├── narrative.ts
-│           │   │   ├── scorer.ts
-│           │   │   ├── Scorerv3full.test.ts
-│           │   │   └── types.ts
+│           │   │   ├── health.ts
+│           │   │   └── portfolio.ts
 │           │   └── server.ts
 │           └── tsconfig.json
 ├── LICENSE
