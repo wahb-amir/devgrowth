@@ -44,13 +44,15 @@ export function bestEffort(label: string, fn: () => Promise<void>): void {
 export function registerTrackerHooks(queue: SimpleJobQueue = jobQueue): void {
   queue.setLifecycleHooks(
     (jobId, jobName) => {
+      const safeId = encodeURIComponent(jobId);
       bestEffort(`step/complete ${jobId}`, () =>
-        trackerPost(`/jobs/${jobId}/step/complete`, { step: jobName })
+        trackerPost(`/jobs/${safeId}/step/complete`, { step: jobName })
       );
     },
     (jobId, jobName, error) => {
+      const safeId = encodeURIComponent(jobId);
       bestEffort(`step/fail ${jobId}`, () =>
-        trackerPost(`/jobs/${jobId}/step/fail`, { step: jobName, error })
+        trackerPost(`/jobs/${safeId}/step/fail`, { step: jobName, error })
       );
     }
   );
@@ -60,11 +62,14 @@ export function registerTrackerHooks(queue: SimpleJobQueue = jobQueue): void {
 // ─── Public API ───────────────────────────────────────────────────────────────
 
 export interface EnqueueTrackedOptions {
-  maxAttempts?: number;
-  queue?: SimpleJobQueue;
-  developerId: string;
-  source: string;
-  metadata?: Record<string, unknown>;
+  maxAttempts?:  number;
+  queue?:        SimpleJobQueue;
+  actorType:     string;   // replaces developerId
+  actorId:       string;   // replaces developerId value
+  source:        string;
+  sourceRef?:    string;
+  parentJobId?:  string;
+  metadata?:     Record<string, unknown>;
 }
 
 export function enqueueTracked(
@@ -72,24 +77,30 @@ export function enqueueTracked(
   {
     maxAttempts = 3,
     queue = jobQueue,
-    developerId,
+    actorType,
+    actorId,
     source,
+    sourceRef,
+    parentJobId,
     metadata: _metadata,
   }: EnqueueTrackedOptions
 ): string {
   const jobId = queue.enqueue(job, maxAttempts);
-
+  const safeId = encodeURIComponent(jobId);
   bestEffort(`create ${jobId}`, () =>
-    trackerPost("/jobs", { job_id: jobId, developer_id: developerId, source })
+    trackerPost("/jobs", {
+      job_id:        safeId,
+      workflow_type: job.name,
+      actor_type:    actorType,
+      actor_id:      actorId,
+      source,
+      ...(sourceRef   ? { source_ref:    sourceRef   } : {}),
+      ...(parentJobId ? { parent_job_id: parentJobId } : {}),
+    })
   );
 
-  bestEffort(`start ${jobId}`, () =>
-    trackerPost(`/jobs/${jobId}/start`, {})
-  );
-
-  bestEffort(`step/start ${jobId}`, () =>
-    trackerPost(`/jobs/${jobId}/step/start`, { step: job.name })
-  );
+  bestEffort(`start ${jobId}`,      () => trackerPost(`/jobs/${safeId}/start`,            {}));
+  bestEffort(`step/start ${jobId}`, () => trackerPost(`/jobs/${safeId}/step/start`, { step: job.name }));
 
   return jobId;
 }

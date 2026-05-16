@@ -292,7 +292,8 @@ export const ingestDev: JobHandler = async (job) => {
         },
       },
       {
-        developerId: locked._id,
+        actorId: locked._id,
+        actorType: "developer",
         source: "ingest"
       },
     );

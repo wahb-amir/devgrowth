@@ -4,15 +4,20 @@ import { JobStatus } from "../../shared/enums";
 
 export const jobsRepository = {
   async create(input: CreateJobInput): Promise<Job> {
-    return prisma.job.create({
-      data: {
-        job_id: input.job_id,
-        developer_id: input.developer_id,
-        source: input.source,
-        status: JobStatus.QUEUED,
-      },
-    });
-  },
+  return prisma.job.create({
+    data: {
+      job_id:           input.job_id,
+      workflow_type:    input.workflow_type,
+      workflow_version: input.workflow_version ?? "1",
+      actor_type:       input.actor_type,
+      actor_id:         input.actor_id,
+      source:           input.source,
+      source_ref:       input.source_ref ?? null,
+      parent_job_id:    input.parent_job_id ?? null,
+      status:           JobStatus.QUEUED,
+    },
+  });
+},
 
   async findById(jobId: string): Promise<Job | null> {
     return prisma.job.findUnique({ where: { job_id: jobId } });

@@ -213,7 +213,7 @@ export const discoverDev: JobHandler = async (job) => {
         {
           $set: {
             ingestionStatus: "pending",
-            failure: null, // 🚨 clear failure on success
+            failure: null,
             lastQueuedAt: new Date(),
           },
         },
@@ -249,7 +249,8 @@ export const discoverDev: JobHandler = async (job) => {
         metadata: { username: normalizedUsername, source: "discovery" },
       },
       {
-        developerId: profile.id.toString(),
+        actorId: profile.id.toString(),
+        actorType: "developer",
         source: source || "discovery",
       },
     );

@@ -20,7 +20,7 @@ export const jobsService = {
       .append({
         job_id: job.job_id,
         event_type: EventType.JOB_CREATED,
-        payload: { developer_id: input.developer_id, source: input.source },
+        payload: { developer_id: input.actor_id, source: input.source },
       })
       .catch((err) =>
         console.error("[events] JOB_CREATED append failed:", err),

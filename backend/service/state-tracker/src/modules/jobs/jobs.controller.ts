@@ -6,9 +6,14 @@ import { AppError } from "../../shared/errors";
 // ─── Schemas ─────────────────────────────────────────────────────────────────
 
 const CreateJobSchema = z.object({
-  job_id: z.string().min(1),
-  developer_id: z.string().min(1),
-  source: z.string().min(1),
+  job_id:           z.string().min(1),
+  workflow_type:    z.string().min(1),
+  workflow_version: z.string().optional().default("1"),
+  actor_type:       z.string().min(1),   
+  actor_id:         z.string().min(1),
+  source:           z.string().min(1),
+  source_ref:       z.string().optional(),
+  parent_job_id:    z.string().optional()
 });
 
 const StartStepSchema = z.object({

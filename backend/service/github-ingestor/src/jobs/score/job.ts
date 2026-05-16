@@ -347,7 +347,8 @@ export const scoreDevV3Full: JobHandler = async (job) => {
       },
     },
     {
-      developerId: String(developer._id),
+      actorId: String(developer._id),
+      actorType: "developer",
       source: "score",
       metadata: {
         scoredSnapshotId: String(saved._id),
