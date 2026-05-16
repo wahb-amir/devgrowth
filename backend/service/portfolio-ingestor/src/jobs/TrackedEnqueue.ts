@@ -7,12 +7,15 @@ const TRACKER_TIMEOUT_MS = 2000;
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
+function createJobId(): string {
+  return `job-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+}
+
 function getJobPath(jobId: string, suffix = ""): string {
-  // Only encode for URL path safety
   return `/jobs/${encodeURIComponent(jobId)}${suffix}`;
 }
 
-// ─── HTTP ────────────────────────────────────────────────────────────────────
+// ─── HTTP ───────────────────────────────────────────────────────────────────
 
 export async function trackerPost(
   path: string,
@@ -30,19 +33,14 @@ export async function trackerPost(
     });
 
     if (!res.ok) {
-      console.warn(
-        `[tracker] POST ${path} returned ${res.status} — continuing`
-      );
+      console.warn(`[tracker] POST ${path} returned ${res.status} — continuing`);
     }
   } finally {
     clearTimeout(timer);
   }
 }
 
-export function bestEffort(
-  label: string,
-  fn: () => Promise<void>
-): void {
+export function bestEffort(label: string, fn: () => Promise<void>): void {
   fn().catch((err: unknown) => {
     const reason =
       err instanceof Error
@@ -51,33 +49,22 @@ export function bestEffort(
           : err.message
         : String(err);
 
-    console.error(
-      `[tracker] ${label} — ${reason} (non-fatal)`
-    );
+    console.error(`[tracker] ${label} — ${reason} (non-fatal)`);
   });
 }
 
 // ─── Lifecycle hooks ────────────────────────────────────────────────────────
 
-export function registerTrackerHooks(
-  queue: SimpleJobQueue = jobQueue
-): void {
+export function registerTrackerHooks(queue: SimpleJobQueue = jobQueue): void {
   queue.setLifecycleHooks(
     (jobId, jobName) => {
       bestEffort(`step/complete ${jobId}`, () =>
-        trackerPost(
-          getJobPath(jobId, "/step/complete"),
-          { step: jobName }
-        )
+        trackerPost(getJobPath(jobId, "/step/complete"), { step: jobName })
       );
     },
-
     (jobId, jobName, error) => {
       bestEffort(`step/fail ${jobId}`, () =>
-        trackerPost(
-          getJobPath(jobId, "/step/fail"),
-          { step: jobName, error }
-        )
+        trackerPost(getJobPath(jobId, "/step/fail"), { step: jobName, error })
       );
     }
   );
@@ -98,7 +85,7 @@ export interface EnqueueTrackedOptions {
   metadata?: Record<string, unknown>;
 }
 
-export function enqueueTracked(
+export async function enqueueTracked(
   job: Job,
   {
     maxAttempts = 3,
@@ -110,11 +97,21 @@ export function enqueueTracked(
     parentJobId,
     metadata: _metadata,
   }: EnqueueTrackedOptions
-): string {
-  const jobId = queue.enqueue(job, maxAttempts);
+): Promise<string> {
+  if (!actorType?.trim()) {
+    throw new Error("enqueueTracked: actorType is required");
+  }
+  if (!actorId?.trim()) {
+    throw new Error("enqueueTracked: actorId is required");
+  }
+  if (!source?.trim()) {
+    throw new Error("enqueueTracked: source is required");
+  }
 
-  bestEffort(`init ${jobId}`, async () => {
-    // Store RAW job id
+  const jobId = createJobId();
+
+  try {
+    // Create tracker record first, so the job cannot complete before it exists.
     await trackerPost("/jobs", {
       job_id: jobId,
       workflow_type: job.name,
@@ -125,13 +122,18 @@ export function enqueueTracked(
       ...(parentJobId ? { parent_job_id: parentJobId } : {}),
     });
 
-    // Encode only for URL path segments
     await trackerPost(getJobPath(jobId, "/start"), {});
-    await trackerPost(
-      getJobPath(jobId, "/step/start"),
-      { step: job.name }
-    );
-  });
+    await trackerPost(getJobPath(jobId, "/step/start"), {
+      step: job.name,
+    });
+
+    // Enqueue only after tracker init succeeds.
+    queue.enqueueWithId(jobId, job, maxAttempts);
+  } catch (err) {
+    const reason = err instanceof Error ? err.message : String(err);
+    console.error(`[tracker] init ${jobId} — ${reason} (non-fatal)`);
+    throw err;
+  }
 
   return jobId;
 }

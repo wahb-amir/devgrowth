@@ -116,8 +116,10 @@ export async function jobsController(app: FastifyInstance) {
     ) => {
       try {
         const body = CompleteStepSchema.parse(req.body);
+        const jobId = decodeURIComponent(req.params.jobId);
+        console.log(`[controller] Completing step "${body.step}" for job ${jobId}`);
         const result = await jobsService.completeStep(
-          req.params.jobId,
+          jobId,
           body.step,
           body.payload,
         );
