@@ -112,7 +112,8 @@ export async function developerRoutes(fastify: FastifyInstance) {
           payload: { username, source: "search" },
         },
         {
-          developerId: username,
+          actorId: username,
+          actorType: "developer",
           source: "search"
         },
       );
