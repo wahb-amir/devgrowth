@@ -245,7 +245,8 @@ export async function parsePortfolioRendered(job: Job): Promise<JobResult> {
         totalTokens,
       },
       {
-        developerId: "unknown",
+        actorId: portfolio.developerId?.toString() ?? "unknown",
+        actorType: "portfolio",
         source: "portfolio",
       },
     );

@@ -33,8 +33,8 @@ export class SimpleJobQueue {
   private queue: QueuedJob[];
   private handlers: Map<string, JobHandler>;
   private isProcessing: boolean;
-  private onJobComplete?: JobLifecycleHook; 
-  private onJobFail?: JobFailHook;          
+  private onJobComplete?: JobLifecycleHook;
+  private onJobFail?: JobFailHook;
 
   constructor(concurrency = 2) {
     this.concurrency = concurrency;
@@ -48,17 +48,22 @@ export class SimpleJobQueue {
     console.info(`✅ Job handler registered: ${jobName}`);
   }
 
-  // 👈
   setLifecycleHooks(onComplete: JobLifecycleHook, onFail: JobFailHook): void {
     this.onJobComplete = onComplete;
     this.onJobFail = onFail;
   }
 
-  enqueue(job: Job, maxAttempts = 3): string {
-    const id = `${job.name}-${Date.now()}-${Math.random()
-      .toString(36)
-      .slice(2, 7)}`;
+  private makeId(jobName: string): string {
+    return `${jobName}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+  }
 
+  enqueue(job: Job, maxAttempts = 3): string {
+    const id = this.makeId(job.name);
+    this.enqueueWithId(id, job, maxAttempts);
+    return id;
+  }
+
+  enqueueWithId(id: string, job: Job, maxAttempts = 3): void {
     this.queue.push({
       id,
       job,
@@ -69,8 +74,6 @@ export class SimpleJobQueue {
 
     console.info(`📥 Job enqueued: ${job.name} [${id}]`);
     void this.process();
-
-    return id;
   }
 
   get depth(): number {
@@ -107,11 +110,10 @@ export class SimpleJobQueue {
               console.info(
                 `✅ Done: ${queued.job.name} [${queued.id}] in ${result.durationMs}ms`,
               );
-              this.onJobComplete?.(queued.id, queued.job.name); // 👈
+              this.onJobComplete?.(queued.id, queued.job.name);
               return;
             }
 
-            // ❌ FAILURE (structured)
             queued.lastError =
               result.error ?? (result.success ? "ok" : "unknown_job_failure");
             queued.retryable = result.retryable ?? false;
@@ -120,7 +122,7 @@ export class SimpleJobQueue {
               `⚠️ Failed: ${queued.job.name} [${queued.id}]: ${result.error ?? "unknown"}`,
             );
 
-            this.onJobFail?.(queued.id, queued.job.name, queued.lastError); // 👈
+            this.onJobFail?.(queued.id, queued.job.name, queued.lastError);
             this.maybeRequeue(queued);
           } catch (err: any) {
             const durationMs = Date.now() - start;
@@ -135,7 +137,7 @@ export class SimpleJobQueue {
               `❌ Threw: ${queued.job.name} [${queued.id}] after ${durationMs}ms — ${errorMessage}`,
             );
 
-            this.onJobFail?.(queued.id, queued.job.name, errorMessage); // 👈
+            this.onJobFail?.(queued.id, queued.job.name, errorMessage);
             this.maybeRequeue(queued);
           }
         }),

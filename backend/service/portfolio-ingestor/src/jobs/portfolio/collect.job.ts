@@ -99,7 +99,8 @@ export async function parsePortfolioCollect(job: Job): Promise<JobResult> {
           },
         },
         {
-          developerId: "unknown",
+          actorId: portfolio.developerId?.toString() ?? "unknown",
+          actorType: "portfolio",
           source: "portfolio",
         },
       );
@@ -181,7 +182,8 @@ export async function parsePortfolioCollect(job: Job): Promise<JobResult> {
         totalTokens,
       },
       {
-        developerId: "unknown",
+        actorId: portfolio.developerId?.toString() ?? "unknown",
+        actorType: "portfolio",
         source: "portfolio",
       },
     );

@@ -8,17 +8,28 @@ datasource db {
 }
 
 model Job {
-  job_id       String     @id
-  developer_id String
-  source       String
-  status       String     @default("queued")
-  current_step String?
-  created_at   DateTime   @default(now())
-  updated_at   DateTime   @updatedAt
+  job_id           String    @id
+  workflow_type    String
+  workflow_version String    @default("1")
+  actor_type       String
+  actor_id         String
+  source           String
+  source_ref       String?
+  parent_job_id    String?
+  artifact_ref     String?
+  status           String    @default("queued")
+  current_step     String?
+  started_at       DateTime?
+  ended_at         DateTime?
+  created_at       DateTime  @default(now())
+  updated_at       DateTime  @updatedAt
 
   steps  JobStep[]
   events JobEvent[]
 
+  @@index([actor_type, actor_id])
+  @@index([parent_job_id])
+  @@index([status])
   @@map("jobs")
 }
 
@@ -35,6 +46,7 @@ model JobStep {
 
   job Job @relation(fields: [job_id], references: [job_id], onDelete: Cascade)
 
+  @@index([job_id, step_name])
   @@map("job_steps")
 }
 
@@ -48,5 +60,7 @@ model JobEvent {
 
   job Job @relation(fields: [job_id], references: [job_id], onDelete: Cascade)
 
+  @@index([job_id])
+  @@index([event_type])
   @@map("job_events")
 }

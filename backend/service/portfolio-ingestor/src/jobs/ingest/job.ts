@@ -317,7 +317,8 @@ export const ingestPortfolio: JobHandler = async (job) => {
         },
       },
       {
-        developerId: existing?.developerId?.toString() ?? "unknown",
+        actorId: existing?.developerId?.toString() ?? "unknown",
+        actorType: "portfolio",
         source: "portfolio",
       },
     );

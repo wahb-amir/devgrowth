@@ -51,7 +51,8 @@ export function registerScheduledJobs() {
             payload: { developerId: String(dev._id), username: dev.username },
           },
           {
-            developerId: String(dev._id),
+            actorId: String(dev._id),
+            actorType: "developer",
             source: "scheduled"
           },
         );
@@ -87,7 +88,8 @@ export function registerScheduledJobs() {
             payload: { developerId: String(dev._id), weekOf },
           },
           {
-            developerId: String(dev._id),
+            actorId: String(dev._id),
+            actorType: "developer",
             source: "scheduled",
           },
         );

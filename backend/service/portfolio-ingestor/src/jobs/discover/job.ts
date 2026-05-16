@@ -186,7 +186,8 @@ export const discoverPortfolio: JobHandler = async (job) => {
         },
       },
       {
-        developerId: normalizedUrl, 
+        actorId: normalizedUrl, 
+        actorType: "portfolio",
         source: source || "discovery"
        },
      );

@@ -159,7 +159,8 @@ export async function portfolioRoutes(fastify: FastifyInstance) {
           },
         },
         {
-          developerId: "unknown",
+          actorId: normalizedUrl,
+          actorType: "portfolio",
           source: "portfolio",
         },
       );
