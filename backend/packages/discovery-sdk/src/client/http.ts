@@ -25,10 +25,16 @@ export async function http<T>(
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), timeoutMs);
 
+      // Grab the token from your environment variables
+      const internalToken = process.env.GITHUB_SERVICE_TOKEN;
+
       const res = await fetch(url, {
         method,
         headers: {
           "Content-Type": "application/json",
+          // 1. Automatically inject the internal token if it exists
+          ...(internalToken ? { "Authorization": `Bearer ${internalToken}` } : {}),
+          // 2. Allow explicit overrides from the caller if passed via options
           ...headers,
         },
         body: body ? JSON.stringify(body) : undefined,
