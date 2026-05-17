@@ -1,7 +1,8 @@
 import { http } from "./http";
 import { validateAndCleanGitHubUsername } from "../validators/github";
-const BASE = process.env.GITHUB_SERVICE_URL;
+import { config } from "../config"
 
+const BASE = config.github.baseUrl;
 /**
  * Helper to ensure the username is sanitized and safe before proceeding.
  * Throws an explicit error if validation fails.
