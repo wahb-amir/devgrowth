@@ -1,3 +1,4 @@
+import { config } from "../config";
 type HttpOptions = {
   method?: "GET" | "POST" | "PUT" | "DELETE";
   body?: any;
@@ -26,7 +27,7 @@ export async function http<T>(
       const timeout = setTimeout(() => controller.abort(), timeoutMs);
 
       // Grab the token from your environment variables
-      const internalToken = process.env.GITHUB_SERVICE_TOKEN;
+      const internalToken = config.github.authToken
 
       const res = await fetch(url, {
         method,
