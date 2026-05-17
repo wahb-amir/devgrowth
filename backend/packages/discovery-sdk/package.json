@@ -1,0 +1,9 @@
+{
+  "name": "discovery-sdk",
+  "version": "0.1.0",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "devDependencies": {
+    "@types/node": "^25.8.0"
+  }
+}
