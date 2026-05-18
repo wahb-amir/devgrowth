@@ -28,6 +28,15 @@ export const githubClient = {
     return http(`${BASE}/developer/${safeUsername}/snapshot/latest`);
   },
 
+  getInSights: (username: string) => {
+    const safeUsername = getSafeUsername(username);
+    return http(`${BASE}/developer/${safeUsername}/insights`);
+  },
+  getDeveloperScore: (username: string) => {
+    const safeUsername = getSafeUsername(username);
+    return http(`${BASE}/developer/${safeUsername}/score`);
+  },
+
   triggerIngestion: (username: string) => {
     const safeUsername = getSafeUsername(username);
     return http(`${BASE}/ingest`, {
