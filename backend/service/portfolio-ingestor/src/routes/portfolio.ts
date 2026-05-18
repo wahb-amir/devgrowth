@@ -1,7 +1,7 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { PortfolioModel } from "../db/models/portfolio.model.js";
-import { jobQueue } from "../jobs/queue.js";
+import { verifyInternalToken } from "../hooks/auth.js";
 import { normalizeSource } from "../lib/normalizeSource.js";
 import { enqueueTracked } from "../jobs/TrackedEnqueue.js";
 
@@ -90,6 +90,9 @@ function getFailureMessage(code: string): string {
 }
 
 export async function portfolioRoutes(fastify: FastifyInstance) {
+
+  fastify.addHook("preHandler", verifyInternalToken);
+  
   // POST /portfolio/discover
   fastify.post<{ Body: DiscoverBody }>(
     "/portfolio/discover",

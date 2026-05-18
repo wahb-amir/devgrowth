@@ -1,4 +1,4 @@
-import { z } from "zod";
+  import { z } from "zod";
 
 const envSchema = z.object({
   PORT: z.coerce.number().default(4000),
@@ -9,6 +9,7 @@ const envSchema = z.object({
   LOG_LEVEL: z
     .enum(["trace", "debug", "info", "warn", "error", "fatal"])
     .default("info"),
+  PORTFOLIO_AUTH_TOKEN: z.string(),
   MONGODB_URI: z.string().default("mongodb://localhost:27017"),
   MONGODB_DB_NAME: z.string().default("portfolio-ingestor"),
   CORS_ORIGIN: z.string().default("*"),
