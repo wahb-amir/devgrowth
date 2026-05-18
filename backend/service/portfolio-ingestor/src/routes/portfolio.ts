@@ -214,4 +214,27 @@ export async function portfolioRoutes(fastify: FastifyInstance) {
       return reply.send({ portfolio });
     },
   );
+
+  // GET /portfolio/:hostname
+  // This endpoint allows fetching the latest portfolio data by hostname, which is useful for the Discovery SDK.
+  fastify.get<{ Params: { hostname: string } }>(
+    "/portfolio/:hostname",
+    async (request, reply) => {
+      const { hostname } = request.params;
+
+      const portfolio = await PortfolioModel.findOne({
+        hostname,
+        ingestionStatus: "complete",
+      }).lean<Portfolio>();
+
+      if (!portfolio) {
+        return reply.status(404).send({
+          error: "not_found",
+          message: `No indexed portfolio found for hostname ${hostname}.`,
+        });
+      }
+
+      return reply.send({ portfolio });
+    }
+  )
 }
