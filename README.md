@@ -71,6 +71,27 @@ Dashboard + Profile + Progress Tracking
 ```
 devgrowth/
 ├── backend
+│   ├── packages
+│   │   └── discovery-sdk
+│   │       ├── package.json
+│   │       ├── pnpm-lock.yaml
+│   │       ├── src
+│   │       │   ├── client
+│   │       │   │   ├── github.client.ts
+│   │       │   │   ├── http.ts
+│   │       │   │   ├── portfolio.client.ts
+│   │       │   │   └── stateTracker.client.ts
+│   │       │   ├── config.ts
+│   │       │   ├── index.ts
+│   │       │   ├── services
+│   │       │   │   ├── github.ts
+│   │       │   │   ├── job.ts
+│   │       │   │   └── portfolio.ts
+│   │       │   ├── types
+│   │       │   │   └── index.ts
+│   │       │   └── validators
+│   │       │       └── github.ts
+│   │       └── tsconfig.json
 │   └── service
 │       ├── github-ingestor
 │       │   ├── package.json
@@ -85,6 +106,8 @@ devgrowth/
 │       │   │   │       ├── insight.model.ts
 │       │   │   │       ├── raw-snapshot.model.ts
 │       │   │   │       └── scored-snapshot.model.ts
+│       │   │   ├── hooks
+│       │   │   │   └── auth.ts
 │       │   │   ├── insights
 │       │   │   │   ├── archetypes.ts
 │       │   │   │   ├── dedup.ts
@@ -166,11 +189,7 @@ devgrowth/
 │           ├── pnpm-lock.yaml
 │           ├── pnpm-workspace.yaml
 │           ├── prisma
-│           │   ├── migrations
-│           │   │   ├── 20260515153117_inital_setup
-│           │   │   │   └── migration.sql
-│           │   │   └── migration_lock.toml
-│           │   └── schema.prisma
+|           | 
 │           ├── README.md
 │           ├── src
 │           │   ├── app.ts
