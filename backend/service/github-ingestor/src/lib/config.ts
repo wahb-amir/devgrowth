@@ -19,7 +19,8 @@ const envSchema = z.object({
   MONGODB_DB_NAME: z.string().default("devgrowth"),
 
   GITHUB_TOKEN: z.string().min(1, "GITHUB_TOKEN is required"),
-
+  GITHUB_AUTH_TOKEN:z.string().min(1, "GITHUB_SERVICE_TOKEN is required"),
+  
   PIPELINE_VERSION: z.string().default("0.1.0"),
   SCORER_VERSION: z.string().default("0.1.0"),
   INSIGHT_VERSION: z.string().default("0.1.0"),
