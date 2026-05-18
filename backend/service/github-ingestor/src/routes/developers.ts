@@ -46,8 +46,7 @@ function getFailureMessage(code: string): string {
 
 export async function developerRoutes(fastify: FastifyInstance) {
   // Attaching the auth hook to all routes in this file to enforce internal token verification
-  fastify.addHook('preHandler', verifyInternalToken);
-
+  fastify.addHook("preHandler", verifyInternalToken);
 
   // POST /developers/discover
   fastify.post<{ Body: DiscoverBody }>(
@@ -117,7 +116,7 @@ export async function developerRoutes(fastify: FastifyInstance) {
         {
           actorId: username,
           actorType: "developer",
-          source: "search"
+          source: "search",
         },
       );
 
@@ -198,6 +197,52 @@ export async function developerRoutes(fastify: FastifyInstance) {
       }
 
       return reply.send({ developer });
+    },
+  );
+
+  //GET /developer/:username/snapshot/latest
+  // returns the latest snapshot for the developer if ingestion is complete, otherwise returns appropriate status messages for pending/failed states.
+
+  fastify.get<{ Params: { username: string } }>(
+    "/developer/:username/snapshot/latest",
+    async (request, reply) => {
+      const username = request.params.username.toLowerCase();
+
+      const developer = await DeveloperModel.findOne({
+        username,
+      }).lean<Developer>();
+
+      if (!developer) {
+        return reply.status(404).send({
+          error: "not_found",
+          message: `${username} has not been indexed yet. POST /discover to index them.`,
+        });
+      }
+
+      if (
+        developer.ingestionStatus === "pending" ||
+        developer.ingestionStatus === "running"
+      ) {
+        return reply.status(202).send({
+          status: developer.ingestionStatus,
+          username,
+          message: `Profile for ${username} is being indexed. Check back shortly.`,
+        });
+      }
+
+      if (developer.ingestionStatus === "failed") {
+        return reply.status(500).send({
+          error: "ingestion_failed",
+          message: `Ingestion for ${username} failed. Please try again later.`,
+        });
+      }
+
+      const snapshot = await DeveloperModel.findOne(
+        { username },
+        { latestSnapshot: 1, _id: 0 },
+      ).lean();
+
+      return reply.send({ snapshot: snapshot?.latestSnapshot ?? null });
     },
   );
 }
