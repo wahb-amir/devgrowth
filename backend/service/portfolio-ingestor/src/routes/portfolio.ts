@@ -1,7 +1,7 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { PortfolioModel } from "../db/models/portfolio.model.js";
-import { jobQueue } from "../jobs/queue.js";
+import { verifyInternalToken } from "../hooks/auth.js";
 import { normalizeSource } from "../lib/normalizeSource.js";
 import { enqueueTracked } from "../jobs/TrackedEnqueue.js";
 
@@ -90,6 +90,9 @@ function getFailureMessage(code: string): string {
 }
 
 export async function portfolioRoutes(fastify: FastifyInstance) {
+
+  fastify.addHook("preHandler", verifyInternalToken);
+  
   // POST /portfolio/discover
   fastify.post<{ Body: DiscoverBody }>(
     "/portfolio/discover",
@@ -214,4 +217,27 @@ export async function portfolioRoutes(fastify: FastifyInstance) {
       return reply.send({ portfolio });
     },
   );
+
+  // GET /portfolio/:hostname
+  // This endpoint allows fetching the latest portfolio data by hostname, which is useful for the Discovery SDK.
+  fastify.get<{ Params: { hostname: string } }>(
+    "/portfolio/:hostname",
+    async (request, reply) => {
+      const { hostname } = request.params;
+
+      const portfolio = await PortfolioModel.findOne({
+        hostname,
+        ingestionStatus: "complete",
+      }).lean<Portfolio>();
+
+      if (!portfolio) {
+        return reply.status(404).send({
+          error: "not_found",
+          message: `No indexed portfolio found for hostname ${hostname}.`,
+        });
+      }
+
+      return reply.send({ portfolio });
+    }
+  )
 }
