@@ -90,9 +90,8 @@ function getFailureMessage(code: string): string {
 }
 
 export async function portfolioRoutes(fastify: FastifyInstance) {
-
   fastify.addHook("preHandler", verifyInternalToken);
-  
+
   // POST /portfolio/discover
   fastify.post<{ Body: DiscoverBody }>(
     "/portfolio/discover",
@@ -177,59 +176,19 @@ export async function portfolioRoutes(fastify: FastifyInstance) {
     },
   );
 
-  // GET /portfolios/by-url?url=https://example.com
-  fastify.get<{ Querystring: { url: string } }>(
-    "/portfolios/by-url",
-    async (request, reply) => {
-      const parsed = portfolioUrlSchema.safeParse(request.query.url);
-
-      if (!parsed.success) {
-        return reply.status(400).send({
-          error: "invalid_url",
-          message: parsed.error.issues[0]?.message ?? "Invalid URL",
-        });
-      }
-
-      const { normalizedUrl } = normalizePortfolioUrl(parsed.data);
-
-      const portfolio = await PortfolioModel.findOne({
-        normalizedUrl,
-      }).lean<Portfolio>();
-
-      if (!portfolio) {
-        return reply.status(404).send({
-          error: "not_found",
-          message: `${normalizedUrl} has not been indexed yet. POST /portfolios/discover to index it.`,
-        });
-      }
-
-      if (
-        portfolio.ingestionStatus === "pending" ||
-        portfolio.ingestionStatus === "running"
-      ) {
-        return reply.status(202).send({
-          status: portfolio.ingestionStatus,
-          normalizedUrl,
-          message: `Portfolio for ${normalizedUrl} is being indexed. Check back shortly.`,
-        });
-      }
-
-      return reply.send({ portfolio });
-    },
-  );
-
   // GET /portfolio/:hostname
-  // This endpoint allows fetching the latest portfolio data by hostname, which is useful for the Discovery SDK.
+  // Unified endpoint to fetch portfolio data by hostname for the Discovery SDK.
   fastify.get<{ Params: { hostname: string } }>(
     "/portfolio/:hostname",
     async (request, reply) => {
       const { hostname } = request.params;
 
+      // Query directly using the indexed hostname field
       const portfolio = await PortfolioModel.findOne({
         hostname,
-        ingestionStatus: "complete",
       }).lean<Portfolio>();
 
+      // 1. Handle case where the domain hasn't been touched at all
       if (!portfolio) {
         return reply.status(404).send({
           error: "not_found",
@@ -237,7 +196,20 @@ export async function portfolioRoutes(fastify: FastifyInstance) {
         });
       }
 
+      // 2. Handle active indexing states gracefully instead of a blank 404
+      if (
+        portfolio.ingestionStatus === "pending" ||
+        portfolio.ingestionStatus === "running"
+      ) {
+        return reply.status(202).send({
+          status: portfolio.ingestionStatus,
+          hostname,
+          message: `Portfolio for ${hostname} is currently being indexed. Check back shortly.`,
+        });
+      }
+
+      // 3. Return the fully complete portfolio data
       return reply.send({ portfolio });
-    }
-  )
+    },
+  );
 }
