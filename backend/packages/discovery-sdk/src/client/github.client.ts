@@ -36,12 +36,12 @@ export const githubClient = {
     const safeUsername = getSafeUsername(username);
     return http(`${BASE}/developer/${safeUsername}/score`);
   },
-
-  triggerIngestion: (username: string) => {
-    const safeUsername = getSafeUsername(username);
-    return http(`${BASE}/ingest`, {
-      method: "POST",
-      body: { username: safeUsername },
-    });
-  },
+  //TODO: NOT YET IMPLEMENTED - will be used to trigger a re-ingestion from the SDK
+  // triggerIngestion: (username: string) => {
+  //   const safeUsername = getSafeUsername(username);
+  //   return http(`${BASE}/ingest`, {
+  //     method: "POST",
+  //     body: { username: safeUsername },
+  //   });
+  // },
 };
