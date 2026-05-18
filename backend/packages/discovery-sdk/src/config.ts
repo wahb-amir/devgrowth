@@ -21,6 +21,10 @@ export const config = {
     baseUrl: getEnvVar('GITHUB_SERVICE_URL'),
     authToken: getEnvVar('GITHUB_SERVICE_TOKEN'),
   },
+  portfolio: {
+    baseUrl: getEnvVar('PORTFOLIO_SERVICE_URL'),
+    authToken: getEnvVar('PORTFOLIO_SERVICE_TOKEN'),
+  }
 
 } as const; // 'as const' makes the config object strictly read-only
 
