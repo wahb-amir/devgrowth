@@ -28,11 +28,20 @@ export const githubClient = {
     return http(`${BASE}/developer/${safeUsername}/snapshot/latest`);
   },
 
-  triggerIngestion: (username: string) => {
+  getInSights: (username: string) => {
     const safeUsername = getSafeUsername(username);
-    return http(`${BASE}/ingest`, {
-      method: "POST",
-      body: { username: safeUsername },
-    });
+    return http(`${BASE}/developer/${safeUsername}/insights`);
   },
+  getDeveloperScore: (username: string) => {
+    const safeUsername = getSafeUsername(username);
+    return http(`${BASE}/developer/${safeUsername}/score`);
+  },
+  //TODO: NOT YET IMPLEMENTED - will be used to trigger a re-ingestion from the SDK
+  // triggerIngestion: (username: string) => {
+  //   const safeUsername = getSafeUsername(username);
+  //   return http(`${BASE}/ingest`, {
+  //     method: "POST",
+  //     body: { username: safeUsername },
+  //   });
+  // },
 };

@@ -245,4 +245,95 @@ export async function developerRoutes(fastify: FastifyInstance) {
       return reply.send({ snapshot: snapshot?.latestSnapshot ?? null });
     },
   );
+
+  //GET :/developer/:username/insights
+  // returns the latest insights for the developer if ingestion is complete, otherwise returns appropriate status messages for pending/failed states.
+  
+  fastify.get<{ Params: { username: string } }>(
+    "/developer/:username/insights",
+    async (request, reply) => {
+      const username = request.params.username.toLowerCase();
+
+      const developer = await DeveloperModel.findOne({
+        username,
+      }).lean<Developer>();
+
+      if (!developer) {
+        return reply.status(404).send({
+          error: "not_found",
+          message: `${username} has not been indexed yet. POST /discover to index them.`,
+        });
+      }
+
+      if (
+        developer.ingestionStatus === "pending" ||
+        developer.ingestionStatus === "running"
+      ) {
+        return reply.status(202).send({
+          status: developer.ingestionStatus,
+          username,
+          message: `Profile for ${username} is being indexed. Check back shortly.`,
+        });
+      }
+
+      if (developer.ingestionStatus === "failed") {
+        return reply.status(500).send({
+          error: "ingestion_failed",
+          message: `Ingestion for ${username} failed. Please try again later.`,
+        });
+      }
+
+      const insights = await DeveloperModel.findOne(
+        { username },
+        { insights: 1, _id: 0 },
+      ).lean();
+
+      return reply.send({ insights: insights?.insights ?? null }); 
+      },
+  );
+  //GET : developer/:username/score
+  // returns the latest score for the developer if ingestion is complete, otherwise returns appropriate status messages for pending/failed states.
+  
+  fastify.get<{ Params: { username: string } }>( 
+    "/developer/:username/score",
+    async (request, reply) => {
+      const username = request.params.username.toLowerCase();
+      
+      const developer = await DeveloperModel.findOne({
+        username,
+      }).lean<Developer>();
+
+      if (!developer) {
+        return reply.status(404).send({
+          error: "not_found",
+          message: `${username} has not been indexed yet. POST /discover to index them.`,
+        });
+      }
+
+      if (
+        developer.ingestionStatus === "pending" ||
+        developer.ingestionStatus === "running"
+      ) {
+        return reply.status(202).send({
+          status: developer.ingestionStatus,
+          username,
+          message: `Profile for ${username} is being indexed. Check back shortly.`,
+        });
+      }
+
+      if (developer.ingestionStatus === "failed") {
+        return reply.status(500).send({
+          error: "ingestion_failed",
+          message: `Ingestion for ${username} failed. Please try again later.`,
+        });
+      }
+
+      const score = await DeveloperModel.findOne(
+        { username },
+        { score: 1, _id: 0 },
+      ).lean();
+
+      return reply.send({ score: score?.score ?? null }); 
+      },
+  );
 }
