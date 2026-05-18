@@ -1,5 +1,5 @@
 import { http } from "./http";
-import { validateAndCleanGitHubUsername } from "../validators/github";
+import { getAndValidateHostname } from "../validators/portfolio";
 import { config } from "../config"
 
 const BASE = config.portfolio.baseUrl;
@@ -7,7 +7,7 @@ const BASE = config.portfolio.baseUrl;
 
 export const portfolioClient = {
     getPortfolio: (hostname:string) => {
-        const safeHostname = validateAndCleanGitHubUsername(hostname);
+        const safeHostname = getAndValidateHostname(hostname);
         return http(`${BASE}/portfolio/${safeHostname}`);
     }
 };
