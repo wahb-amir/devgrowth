@@ -10,4 +10,5 @@ export const portfolioClient = {
         const safeHostname = getAndValidateHostname(hostname);
         return http(`${BASE}/portfolio/${safeHostname}`);
     }
+    
 };

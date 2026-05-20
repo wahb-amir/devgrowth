@@ -32,6 +32,7 @@ export const githubClient = {
     const safeUsername = getSafeUsername(username);
     return http(`${BASE}/developer/${safeUsername}/insights`);
   },
+  
   getDeveloperScore: (username: string) => {
     const safeUsername = getSafeUsername(username);
     return http(`${BASE}/developer/${safeUsername}/score`);
